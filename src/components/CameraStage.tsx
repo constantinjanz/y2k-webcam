@@ -56,7 +56,7 @@ const EMPTY_HUD: TechnicalHudSnapshot = {
   sheetState: 'INACTIVE',
   crossing: false,
   fps: 0,
-  preset: 'Berlin Rave',
+  preset: 'Thermal Vision',
   leftFingers: [],
   rightFingers: [],
   singleFingers: [],
@@ -79,7 +79,7 @@ export function CameraStage() {
   const startedRef = useRef(false);
   const modelReadyRef = useRef(false);
   const settingsRef = useRef<CameraSettings>({
-    presetId: 'berlin-rave',
+    presetId: 'thermal-vision',
     debug: true,
     sensitivity: 1,
     intensity: 1,
@@ -89,7 +89,7 @@ export function CameraStage() {
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState('BOOT WAIT: camera module idle');
   const [error, setError] = useState('');
-  const [presetId, setPresetId] = useState<PresetId>('berlin-rave');
+  const [presetId, setPresetId] = useState<PresetId>('thermal-vision');
   const [debug, setDebug] = useState(true);
   const [sensitivity, setSensitivity] = useState(1);
   const [intensity, setIntensity] = useState(1);
@@ -547,12 +547,10 @@ export function CameraStage() {
 }
 
 function getBackgroundFilter(presetId: PresetId, intensity: number) {
-  if (presetId === 'hacker-surveillance') return `contrast(${1.2 + intensity * 0.16}) saturate(0.72) brightness(0.9)`;
-  if (presetId === 'night-vision') return `contrast(${1.2 + intensity * 0.16}) saturate(0.72) brightness(0.9)`;
-  if (presetId === 'dirty-photocopy') return `contrast(${1.32 + intensity * 0.18}) saturate(0.44) brightness(0.9)`;
-  if (presetId === 'webcam-2001') return `contrast(${1.22 + intensity * 0.14}) saturate(0.7) brightness(0.94)`;
-  if (presetId === 'old-virus') return `contrast(${1.36 + intensity * 0.18}) saturate(1.2) brightness(0.88)`;
-  if (presetId === 'thermal-rave') return `contrast(1.22) saturate(${1.05 + intensity * 0.26}) brightness(0.9)`;
+  if (presetId === 'ai-tracker') return `contrast(${1.2 + intensity * 0.14}) saturate(0.58) brightness(0.9)`;
+  if (presetId === 'rave-tricolor') return `contrast(${1.22 + intensity * 0.12}) saturate(0.92) brightness(0.9)`;
+  if (presetId === 'dead-channel') return `contrast(${1.34 + intensity * 0.18}) saturate(0.22) brightness(0.84)`;
+  if (presetId === 'hypercolor-cctv') return `contrast(${1.22 + intensity * 0.16}) saturate(${1.2 + intensity * 0.3}) brightness(0.88)`;
   return `contrast(${1.18 + intensity * 0.14}) saturate(0.88) brightness(0.9)`;
 }
 
