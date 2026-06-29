@@ -1,4 +1,4 @@
-export type PresetId = 'prism-rave' | 'webcam-2004' | 'rgb-ghost' | 'dot-matrix' | 'acid-mirror';
+export type PresetId = 'xerox-rave' | 'club-flyer' | 'webcam-2001' | 'dirty-scanner' | 'acid-broadcast';
 
 export type VisualPreset = {
   id: PresetId;
@@ -8,83 +8,121 @@ export type VisualPreset = {
   secondary: string;
   pixelScale: number;
   rgbShift: number;
-  posterize: number;
   trailAlpha: number;
   noise: number;
-  prismGlow: number;
-  dotMatrix?: boolean;
-  mirrorShards?: boolean;
+  paper: string;
+  ink: string;
+  halftone: string;
+  xerox: string;
+  acid: string;
+  grain: number;
+  scanlines: number;
+  rgbTear: number;
+  panelContrast: number;
   timestamp?: boolean;
 };
 
 export const PRESETS: VisualPreset[] = [
   {
-    id: 'prism-rave',
-    label: 'Prism Rave',
-    backgroundTint: 'rgba(0, 18, 24, 0.24)',
-    accent: '#36f5c7',
-    secondary: '#ffe84a',
-    pixelScale: 0.19,
-    rgbShift: 14,
-    posterize: 0.78,
-    trailAlpha: 0.12,
-    noise: 0.68,
-    prismGlow: 1,
+    id: 'xerox-rave',
+    label: 'Xerox Rave',
+    backgroundTint: 'rgba(6, 8, 7, 0.24)',
+    accent: '#00e7ff',
+    secondary: '#ff2a2a',
+    pixelScale: 0.16,
+    rgbShift: 9,
+    trailAlpha: 0.1,
+    noise: 0.5,
+    paper: '#f3efd8',
+    ink: '#050505',
+    halftone: '#e11522',
+    xerox: '#0f67ff',
+    acid: '#c9ff1a',
+    grain: 0.8,
+    scanlines: 0.6,
+    rgbTear: 0.75,
+    panelContrast: 1.4,
   },
   {
-    id: 'webcam-2004',
-    label: 'Webcam 2004',
-    backgroundTint: 'rgba(10, 10, 10, 0.42)',
-    accent: '#f5f5f5',
-    secondary: '#72d7ff',
+    id: 'club-flyer',
+    label: 'Club Flyer',
+    backgroundTint: 'rgba(14, 8, 4, 0.28)',
+    accent: '#ffe600',
+    secondary: '#f21616',
+    pixelScale: 0.14,
+    rgbShift: 7,
+    trailAlpha: 0.08,
+    noise: 0.62,
+    paper: '#fff2c6',
+    ink: '#050403',
+    halftone: '#ef1717',
+    xerox: '#1636f5',
+    acid: '#ffe600',
+    grain: 0.9,
+    scanlines: 0.48,
+    rgbTear: 0.55,
+    panelContrast: 1.55,
+  },
+  {
+    id: 'webcam-2001',
+    label: 'Webcam 2001',
+    backgroundTint: 'rgba(0, 12, 10, 0.28)',
+    accent: '#69ffd4',
+    secondary: '#d8fff5',
     pixelScale: 0.11,
     rgbShift: 5,
-    posterize: 0.44,
-    trailAlpha: 0.05,
-    noise: 0.92,
-    prismGlow: 0.4,
+    trailAlpha: 0.06,
+    noise: 0.72,
+    paper: '#dff8ef',
+    ink: '#071614',
+    halftone: '#ff4040',
+    xerox: '#00a7d8',
+    acid: '#99ff55',
+    grain: 0.72,
+    scanlines: 0.85,
+    rgbTear: 0.42,
+    panelContrast: 1.25,
     timestamp: true,
   },
   {
-    id: 'rgb-ghost',
-    label: 'RGB Ghost',
-    backgroundTint: 'rgba(0, 0, 12, 0.18)',
-    accent: '#ff2a6d',
-    secondary: '#05d9e8',
-    pixelScale: 0.23,
-    rgbShift: 24,
-    posterize: 0.56,
-    trailAlpha: 0.24,
-    noise: 0.54,
-    prismGlow: 0.8,
+    id: 'dirty-scanner',
+    label: 'Dirty Scanner',
+    backgroundTint: 'rgba(12, 10, 8, 0.32)',
+    accent: '#f4ead4',
+    secondary: '#c91818',
+    pixelScale: 0.13,
+    rgbShift: 4,
+    trailAlpha: 0.04,
+    noise: 0.82,
+    paper: '#ede1c6',
+    ink: '#060504',
+    halftone: '#b71313',
+    xerox: '#4a5f7f',
+    acid: '#d6d6c8',
+    grain: 1,
+    scanlines: 0.7,
+    rgbTear: 0.28,
+    panelContrast: 1.65,
   },
   {
-    id: 'dot-matrix',
-    label: 'Dot Matrix',
-    backgroundTint: 'rgba(4, 8, 4, 0.32)',
-    accent: '#d5ff3f',
-    secondary: '#ff4fd8',
-    pixelScale: 0.17,
-    rgbShift: 9,
-    posterize: 0.86,
-    trailAlpha: 0.08,
-    noise: 0.42,
-    prismGlow: 0.65,
-    dotMatrix: true,
-  },
-  {
-    id: 'acid-mirror',
-    label: 'Acid Mirror',
-    backgroundTint: 'rgba(18, 0, 20, 0.25)',
-    accent: '#fffb00',
-    secondary: '#00ff85',
-    pixelScale: 0.21,
-    rgbShift: 17,
-    posterize: 0.74,
-    trailAlpha: 0.16,
-    noise: 0.63,
-    prismGlow: 1.1,
-    mirrorShards: true,
+    id: 'acid-broadcast',
+    label: 'Acid Broadcast',
+    backgroundTint: 'rgba(0, 12, 4, 0.24)',
+    accent: '#d7ff00',
+    secondary: '#008cff',
+    pixelScale: 0.15,
+    rgbShift: 11,
+    trailAlpha: 0.11,
+    noise: 0.58,
+    paper: '#efffd8',
+    ink: '#071107',
+    halftone: '#ff2626',
+    xerox: '#008cff',
+    acid: '#b6ff00',
+    grain: 0.76,
+    scanlines: 0.9,
+    rgbTear: 0.85,
+    panelContrast: 1.48,
   },
 ];
 
