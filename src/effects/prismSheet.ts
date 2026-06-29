@@ -18,29 +18,57 @@ export function drawPrismSheet(
   const points = prism.points;
   const alpha = clamp(prism.decay, 0, 1);
   const shift = preset.rgbShift * intensity * alpha;
-  const jitter = Math.sin(timeMs * 0.007 + prism.distance * 0.012) * shift * 0.45 + prism.tilt * shift;
+  const motionDamping = 1 - clamp(prism.motion / 42, 0, 0.74);
+  const heavyEffects = intensity >= 1.45;
+  const crossingEffects = intensity >= 1.2;
+  const jitter = (Math.sin(timeMs * 0.005 + prism.distance * 0.012) * shift * 0.12 + prism.tilt * shift * 0.45) * motionDamping;
 
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.shadowColor = preset.accent;
-  ctx.shadowBlur = 28 * preset.prismGlow * intensity * alpha;
+  ctx.shadowBlur = 12 * preset.prismGlow * intensity * alpha;
   ctx.lineJoin = 'round';
 
+  drawSoftEdge(ctx, points, preset, alpha, intensity);
   drawPolygonVideo(ctx, pixelBuffer, points, preset, timeMs, jitter, intensity, alpha);
-  drawFanSections(ctx, pixelBuffer, points, preset, timeMs, intensity, alpha);
+  if (heavyEffects) {
+    drawFanSections(ctx, pixelBuffer, points, preset, timeMs, intensity, alpha);
+  }
   drawRgbRims(ctx, pixelBuffer, points, preset, shift, alpha);
   drawInternalFolds(ctx, prism, preset, alpha, intensity);
   drawPrismFrame(ctx, points, preset, alpha, intensity);
 
-  if (preset.dotMatrix) {
+  if (preset.dotMatrix && heavyEffects) {
     drawDotMatrix(ctx, points, width, height, preset, alpha);
   }
 
-  if (preset.mirrorShards) {
+  if (preset.mirrorShards && heavyEffects) {
     drawMirrorShards(ctx, pixelBuffer, points, preset, timeMs, alpha);
   }
 
-  drawCrossingEffect(ctx, pixelBuffer, prism, preset, timeMs, intensity);
+  if (prism.crossing && crossingEffects) {
+    drawCrossingEffect(ctx, pixelBuffer, prism, preset, timeMs, intensity);
+  }
+  ctx.restore();
+}
+
+function drawSoftEdge(
+  ctx: CanvasRenderingContext2D,
+  points: Point[],
+  preset: VisualPreset,
+  alpha: number,
+  intensity: number,
+) {
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+  ctx.strokeStyle = preset.accent;
+
+  for (let index = 0; index < 2; index += 1) {
+    ctx.globalAlpha = alpha * (0.12 - index * 0.04);
+    ctx.lineWidth = 9 + index * 9 + intensity * 2;
+    strokePolygon(ctx, points);
+  }
+
   ctx.restore();
 }
 
@@ -57,10 +85,11 @@ function drawPolygonVideo(
   ctx.save();
   clipPolygon(ctx, points);
   ctx.imageSmoothingEnabled = false;
-  ctx.filter = `contrast(${1.16 + preset.posterize * 0.36}) saturate(${1.42 + intensity * 0.9}) hue-rotate(${Math.sin(timeMs * 0.0015) * 22}deg)`;
-  ctx.drawImage(pixelBuffer, jitter, Math.cos(timeMs * 0.004) * intensity * 4, ctx.canvas.width, ctx.canvas.height);
+  const hue = intensity >= 1.35 ? Math.sin(timeMs * 0.0015) * 16 : 0;
+  ctx.filter = `contrast(${1.14 + preset.posterize * 0.28}) saturate(${1.3 + intensity * 0.55}) hue-rotate(${hue}deg)`;
+  ctx.drawImage(pixelBuffer, jitter, Math.cos(timeMs * 0.003) * intensity * 1.5, ctx.canvas.width, ctx.canvas.height);
   ctx.globalCompositeOperation = 'screen';
-  ctx.globalAlpha = alpha * 0.18;
+  ctx.globalAlpha = alpha * 0.12;
   ctx.fillStyle = preset.accent;
   ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   ctx.restore();
@@ -82,7 +111,7 @@ function drawFanSections(
 
   points.forEach((point, index) => {
     const next = points[(index + 1) % points.length];
-    const offset = Math.sin(timeMs * 0.006 + index * 1.8) * (5 + intensity * 10);
+    const offset = Math.sin(timeMs * 0.004 + index * 1.8) * (3 + intensity * 6);
 
     ctx.save();
     clipPolygon(ctx, [center, point, next]);
@@ -111,14 +140,9 @@ function drawRgbRims(
   ctx.globalCompositeOperation = 'screen';
   ctx.filter = 'saturate(2.2) contrast(1.25)';
 
-  ctx.globalAlpha = 0.22 * alpha;
-  ctx.drawImage(pixelBuffer, -shift, 0, ctx.canvas.width, ctx.canvas.height);
+  ctx.globalAlpha = 0.18 * alpha;
+  ctx.drawImage(pixelBuffer, -shift * 0.55, shift * 0.12, ctx.canvas.width, ctx.canvas.height);
   ctx.fillStyle = 'rgba(255, 32, 100, 0.18)';
-  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-
-  ctx.globalAlpha = 0.2 * alpha;
-  ctx.drawImage(pixelBuffer, shift * 0.64, shift * 0.3, ctx.canvas.width, ctx.canvas.height);
-  ctx.fillStyle = `${preset.accent}33`;
   ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   ctx.restore();
 }
@@ -132,10 +156,10 @@ function drawInternalFolds(
 ) {
   ctx.save();
   ctx.globalCompositeOperation = 'screen';
-  ctx.lineWidth = 1 + intensity * 1.6;
-  ctx.setLineDash([8, 7]);
+  ctx.lineWidth = 1 + intensity * 0.9;
+  ctx.setLineDash([9, 8]);
 
-  prism.foldLines.forEach(([a, b], index) => {
+  prism.foldLines.slice(0, 8).forEach(([a, b], index) => {
     ctx.globalAlpha = alpha * (0.22 + (index % 3) * 0.08);
     ctx.strokeStyle = index % 2 === 0 ? preset.secondary : preset.accent;
     ctx.beginPath();
@@ -156,18 +180,14 @@ function drawPrismFrame(
 ) {
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.lineWidth = 2 + intensity * 2;
+  ctx.lineWidth = 1.5 + intensity * 1.25;
   ctx.strokeStyle = preset.accent;
-  ctx.beginPath();
-  ctx.moveTo(points[0].x, points[0].y);
-  points.slice(1).forEach((point) => ctx.lineTo(point.x, point.y));
-  ctx.closePath();
-  ctx.stroke();
+  strokePolygon(ctx, points);
 
   ctx.globalCompositeOperation = 'screen';
   ctx.lineWidth = 1;
   ctx.strokeStyle = preset.secondary;
-  points.forEach((point, index) => {
+  points.slice(0, 8).forEach((point, index) => {
     const opposite = points[(index + Math.floor(points.length / 2)) % points.length];
     if (!opposite || points.length < 4) return;
     ctx.beginPath();
@@ -178,10 +198,20 @@ function drawPrismFrame(
 
   points.forEach((point, index) => {
     ctx.fillStyle = index % 2 === 0 ? preset.accent : preset.secondary;
-    ctx.fillRect(point.x - 5, point.y - 5, 10, 10);
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, 4.5 + intensity * 0.6, 0, Math.PI * 2);
+    ctx.fill();
   });
 
   ctx.restore();
+}
+
+function strokePolygon(ctx: CanvasRenderingContext2D, points: Point[]) {
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  points.slice(1).forEach((point) => ctx.lineTo(point.x, point.y));
+  ctx.closePath();
+  ctx.stroke();
 }
 
 function drawDotMatrix(

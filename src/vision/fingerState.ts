@@ -26,34 +26,40 @@ export type FingerMeasurement = {
   pip: Point;
   rawExtended: boolean;
   confidence: number;
+  score: number;
 };
 
 export const FINGER_NAMES: FingerName[] = ['thumb', 'index', 'middle', 'ring', 'pinky'];
 
-const FINGER_LANDMARKS: Record<FingerName, { tip: number; pip: number; mcp: number }> = {
+const FINGER_LANDMARKS: Record<FingerName, { tip: number; pip: number; dip: number; mcp: number }> = {
   thumb: {
     tip: HAND_LANDMARK.THUMB_TIP,
     pip: HAND_LANDMARK.THUMB_IP,
+    dip: HAND_LANDMARK.THUMB_IP,
     mcp: HAND_LANDMARK.THUMB_MCP,
   },
   index: {
     tip: HAND_LANDMARK.INDEX_TIP,
     pip: HAND_LANDMARK.INDEX_PIP,
+    dip: HAND_LANDMARK.INDEX_DIP,
     mcp: HAND_LANDMARK.INDEX_MCP,
   },
   middle: {
     tip: HAND_LANDMARK.MIDDLE_TIP,
     pip: HAND_LANDMARK.MIDDLE_PIP,
+    dip: HAND_LANDMARK.MIDDLE_DIP,
     mcp: HAND_LANDMARK.MIDDLE_MCP,
   },
   ring: {
     tip: HAND_LANDMARK.RING_TIP,
     pip: HAND_LANDMARK.RING_PIP,
+    dip: HAND_LANDMARK.RING_DIP,
     mcp: HAND_LANDMARK.RING_MCP,
   },
   pinky: {
     tip: HAND_LANDMARK.PINKY_TIP,
     pip: HAND_LANDMARK.PINKY_PIP,
+    dip: HAND_LANDMARK.PINKY_DIP,
     mcp: HAND_LANDMARK.PINKY_MCP,
   },
 };
@@ -101,24 +107,51 @@ function measureLongFinger(
   const landmarks = FINGER_LANDMARKS[finger];
   const tip = hand.landmarks[landmarks.tip];
   const pip = hand.landmarks[landmarks.pip];
+  const dip = hand.landmarks[landmarks.dip];
   const mcp = hand.landmarks[landmarks.mcp];
-  const palmTipRatio = distance(tip, palm) / Math.max(1, distance(pip, palm));
-  const wristTipRatio = distance(tip, wrist) / Math.max(1, distance(pip, wrist));
-  const jointOpenRatio = distance(tip, mcp) / Math.max(1, distance(pip, mcp));
-  const direction = dot(normalize(subtract(tip, pip)), normalize(subtract(pip, mcp)));
+  const tipPalm = distance(tip, palm);
+  const pipPalm = distance(pip, palm);
+  const mcpPalm = distance(mcp, palm);
+  const tipWrist = distance(tip, wrist);
+  const pipWrist = distance(pip, wrist);
+  const tipMcp = distance(tip, mcp);
+  const pipMcp = distance(pip, mcp);
+  const mcpPip = distance(pip, mcp);
+
+  // Rotation-tolerant extension: a real extended finger is long, straight,
+  // and moves the tip clearly away from the palm. Curled fingers fail at
+  // least one of these even when the hand is tilted.
+  const palmTipRatio = tipPalm / Math.max(1, pipPalm);
+  const palmMcpRatio = tipPalm / Math.max(1, mcpPalm);
+  const wristTipRatio = tipWrist / Math.max(1, pipWrist);
+  const jointOpenRatio = tipMcp / Math.max(1, pipMcp);
+  const palmClearance = (tipPalm - pipPalm) / Math.max(1, mcpPip);
+  const baseStraightness = dot(normalize(subtract(pip, mcp)), normalize(subtract(dip, pip)));
+  const tipStraightness = dot(normalize(subtract(dip, pip)), normalize(subtract(tip, dip)));
+  const straightness = Math.min(baseStraightness, tipStraightness);
+  const fingerPenalty = finger === 'ring' ? 0.1 : finger === 'pinky' ? 0.06 : finger === 'middle' ? 0.04 : 0;
   const score =
-    (palmTipRatio - 1.12) * 2.2 +
-    (wristTipRatio - 1.06) * 1.5 +
-    (jointOpenRatio - 1.1) * 1.35 +
-    (direction + 0.05) * 0.7;
-  const rawExtended = score > 0.28;
+    (palmTipRatio - 1.2) * 1.55 +
+    (palmMcpRatio - 1.42) * 0.75 +
+    (wristTipRatio - 1.1) * 1.05 +
+    (jointOpenRatio - 1.42) * 1.25 +
+    (palmClearance - 0.46) * 1.15 +
+    (straightness - 0.62) * 1.35 -
+    fingerPenalty;
+  const rawExtended =
+    score > 0.62 &&
+    palmTipRatio > 1.16 &&
+    jointOpenRatio > 1.3 &&
+    palmClearance > 0.36 &&
+    straightness > 0.56;
 
   return {
     finger,
     tip,
     pip,
     rawExtended,
-    confidence: clamp(0.35 + score * 0.42, 0, 1),
+    confidence: clamp(0.2 + score * 0.55, 0, 1),
+    score,
   };
 }
 
@@ -141,8 +174,9 @@ function measureThumb(hand: TrackedHand, palm: Point, palmScale: number): Finger
     finger: 'thumb',
     tip,
     pip: ip,
-    rawExtended: score > 0.2,
-    confidence: clamp(0.32 + score * 0.48, 0, 1),
+    rawExtended: score > 0.42 && awayFromPalm > 0.52 && thumbOpenRatio > 1.12,
+    confidence: clamp(0.22 + score * 0.52, 0, 1),
+    score,
   };
 }
 

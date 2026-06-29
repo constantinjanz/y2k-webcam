@@ -20,6 +20,7 @@ export type PrismFrame = {
   center: Point;
   distance: number;
   tilt: number;
+  motion: number;
   fps: number;
   logLines: string[];
 };
@@ -33,14 +34,18 @@ type PrismOptions = {
 type LastSheet = Pick<
   PrismFrame,
   'points' | 'foldLines' | 'crossingPoints' | 'crossing' | 'center' | 'distance' | 'tilt'
->;
+> & { motion: number };
 
 const HOLD_MS = 220;
 const DECAY_MS = 760;
+const SHEET_LERP = 0.3;
+const CROSSING_STICKY_MS = 220;
 
 export function createPrismEngine() {
   const anchorTracker = createAnchorTracker();
   let lastActiveAt = 0;
+  let lastCrossingAt = 0;
+  let lastCrossingPoints: Point[] = [];
   let lastSheet: LastSheet | null = null;
   let lastFrameAt = 0;
   let fps = 0;
@@ -52,10 +57,17 @@ export function createPrismEngine() {
       lastFrameAt = now;
 
       const activation = getActivation(anchorFrame);
-      const liveSheet = activation.effectActive ? buildLiveSheet(anchorFrame.anchors, options) : null;
+      const liveSheet = activation.effectActive ? buildLiveSheet(anchorFrame.anchors, options, lastSheet) : null;
 
       if (liveSheet) {
         lastActiveAt = now;
+        if (liveSheet.crossing) {
+          lastCrossingAt = now;
+          lastCrossingPoints = liveSheet.crossingPoints;
+        } else if (now - lastCrossingAt < CROSSING_STICKY_MS) {
+          liveSheet.crossing = true;
+          liveSheet.crossingPoints = lastCrossingPoints;
+        }
         lastSheet = liveSheet;
 
         return buildFrame(anchorFrame, liveSheet, {
@@ -93,6 +105,8 @@ export function createPrismEngine() {
     reset() {
       anchorTracker.reset();
       lastActiveAt = 0;
+      lastCrossingAt = 0;
+      lastCrossingPoints = [];
       lastSheet = null;
       lastFrameAt = 0;
       fps = 0;
@@ -101,7 +115,8 @@ export function createPrismEngine() {
 }
 
 function getActivation(frame: AnchorFrame) {
-  const hasOneHandWithTwoFingers = frame.hands.some((hand) => hand.anchors.length >= 2);
+  const anchorsByHand = groupAnchorsByHand(frame.anchors);
+  const hasOneHandWithTwoFingers = Array.from(anchorsByHand.values()).some((anchors) => anchors.length >= 2);
   const hasEnoughTotalAnchors = frame.anchors.length >= 3 || (hasOneHandWithTwoFingers && frame.anchors.length >= 2);
 
   return {
@@ -111,9 +126,11 @@ function getActivation(frame: AnchorFrame) {
   };
 }
 
-function buildLiveSheet(anchors: FingerAnchor[], options: PrismOptions): LastSheet {
+function buildLiveSheet(anchors: FingerAnchor[], options: PrismOptions, previousSheet: LastSheet | null): LastSheet {
   const sortedPoints = orderSheetPoints(anchors);
-  const points = expandFromCenter(sortedPoints, 1.04 + clamp(options.sensitivity - 1, -0.45, 0.65) * 0.04);
+  const expandedPoints = expandFromCenter(sortedPoints, 1.04 + clamp(options.sensitivity - 1, -0.45, 0.65) * 0.04);
+  const motion = getPointMotion(previousSheet?.points, expandedPoints);
+  const points = smoothSheetPoints(previousSheet?.points, expandedPoints, SHEET_LERP);
   const center = polygonCenter(points);
   const foldLines = buildFoldLines(anchors, points);
   const crossingPoints = findCrossingPoints(points, foldLines);
@@ -129,6 +146,7 @@ function buildLiveSheet(anchors: FingerAnchor[], options: PrismOptions): LastShe
     center,
     distance: maxDistance,
     tilt,
+    motion,
   };
 }
 
@@ -151,6 +169,7 @@ function buildFrame(
     center: sheet?.center ?? { x: 0, y: 0, z: 0 },
     distance: sheet?.distance ?? 0,
     tilt: sheet?.tilt ?? 0,
+    motion: sheet?.motion ?? 0,
     logLines: makeLogLines(anchorFrame, state.sheetState, crossing),
     ...state,
   };
@@ -161,6 +180,11 @@ function orderSheetPoints(anchors: FingerAnchor[]): Point[] {
     return buildTwoAnchorSheet(anchors);
   }
 
+  const stablePoints = orderAnchorsStably(anchors).map(anchorToPoint);
+  if (stablePoints.length >= 3 && Math.abs(getPolygonArea(stablePoints)) > 120) {
+    return stablePoints;
+  }
+
   const points = anchors.map(anchorToPoint);
   const center = polygonCenter(points);
 
@@ -168,6 +192,22 @@ function orderSheetPoints(anchors: FingerAnchor[]): Point[] {
     .map((point) => ({ point, angle: angleBetween(center, point) }))
     .sort((a, b) => a.angle - b.angle)
     .map(({ point }) => point);
+}
+
+function orderAnchorsStably(anchors: FingerAnchor[]) {
+  const left = sortAnchorsByFinger(anchors.filter((anchor) => anchor.handId === 'left'));
+  const right = sortAnchorsByFinger(anchors.filter((anchor) => anchor.handId === 'right'));
+  const single = sortAnchorsByFinger(anchors.filter((anchor) => anchor.handId === 'single'));
+
+  if (single.length) {
+    return single;
+  }
+
+  if (left.length || right.length) {
+    return [...left, ...right.reverse()];
+  }
+
+  return sortAnchorsByFinger(anchors);
 }
 
 function buildTwoAnchorSheet(anchors: FingerAnchor[]): Point[] {
@@ -281,6 +321,47 @@ function shareEndpoint(a: [Point, Point], b: [Point, Point]) {
 
 function sortAnchorsByFinger(anchors: FingerAnchor[]) {
   return [...anchors].sort((a, b) => FINGER_NAMES.indexOf(a.finger) - FINGER_NAMES.indexOf(b.finger));
+}
+
+function groupAnchorsByHand(anchors: FingerAnchor[]) {
+  return anchors.reduce((groups, anchor) => {
+    const group = groups.get(anchor.handId) ?? [];
+    group.push(anchor);
+    groups.set(anchor.handId, group);
+    return groups;
+  }, new Map<FingerAnchor['handId'], FingerAnchor[]>());
+}
+
+function smoothSheetPoints(previous: Point[] | undefined, next: Point[], amount: number) {
+  if (!previous || previous.length !== next.length) {
+    return next;
+  }
+
+  return next.map((point, index) => ({
+    x: previous[index].x + (point.x - previous[index].x) * amount,
+    y: previous[index].y + (point.y - previous[index].y) * amount,
+    z: (previous[index].z ?? 0) + ((point.z ?? 0) - (previous[index].z ?? 0)) * amount,
+  }));
+}
+
+function getPointMotion(previous: Point[] | undefined, next: Point[]) {
+  if (!previous || previous.length !== next.length) {
+    return 0;
+  }
+
+  const total = next.reduce((sum, point, index) => sum + distance(point, previous[index]), 0);
+  return total / next.length;
+}
+
+function getPolygonArea(points: Point[]) {
+  let area = 0;
+
+  for (let index = 0; index < points.length; index += 1) {
+    const next = points[(index + 1) % points.length];
+    area += points[index].x * next.y - next.x * points[index].y;
+  }
+
+  return area * 0.5;
 }
 
 function dedupeLines(lines: Array<[Point, Point]>): Array<[Point, Point]> {

@@ -74,6 +74,8 @@ export function CameraStage() {
   const lastVideoTimeRef = useRef(-1);
   const lastDetectedHandsRef = useRef<TrackedHand[]>([]);
   const lastHudUpdateRef = useRef(0);
+  const lastHudSnapshotRef = useRef<TechnicalHudSnapshot>(EMPTY_HUD);
+  const feedbackFrameRef = useRef(0);
   const startedRef = useRef(false);
   const modelReadyRef = useRef(false);
   const settingsRef = useRef<CameraSettings>({
@@ -148,7 +150,10 @@ export function CameraStage() {
 
     ctx.fillStyle = preset.backgroundTint;
     ctx.fillRect(0, 0, width, height);
-    drawFeedbackTrails(ctx, buffers.feedback, preset, settings.intensity);
+    const drawTrails = shouldDrawFeedbackTrails(preset, settings.intensity);
+    if (drawTrails) {
+      drawFeedbackTrails(ctx, buffers.feedback, preset, settings.intensity);
+    }
 
     let detectedHands = lastDetectedHandsRef.current;
     const tracker = trackerRef.current;
@@ -169,8 +174,12 @@ export function CameraStage() {
     });
 
     drawPrismSheet(ctx, buffers.pixel, prismFrame, preset, now, settings.intensity);
-    drawGlitchLineNoise(ctx, width, height, preset.noise * settings.intensity, now * 0.02);
-    drawAnchorLabels(ctx, prismFrame.anchors, preset, width);
+    if (settings.intensity > 1.25 && Math.floor(now / 90) % 2 === 0) {
+      drawGlitchLineNoise(ctx, width, height, preset.noise * settings.intensity * 0.35, now * 0.02);
+    }
+    if (settings.debug) {
+      drawAnchorLabels(ctx, prismFrame.anchors, preset, width);
+    }
 
     if (preset.timestamp) {
       drawTimestamp(ctx, width, height);
@@ -181,12 +190,21 @@ export function CameraStage() {
     }
 
     drawCornerHud(ctx, width, height, prismFrame, preset.label);
-    captureFeedback(buffers.feedback, canvas);
+    if (drawTrails) {
+      feedbackFrameRef.current += 1;
+      if (feedbackFrameRef.current % 4 === 0) {
+        captureFeedback(buffers.feedback, canvas);
+      }
+    }
     ctx.restore();
 
-    if (now - lastHudUpdateRef.current > 150) {
+    if (now - lastHudUpdateRef.current > 500) {
       lastHudUpdateRef.current = now;
-      setHudSnapshot(toHudSnapshot(prismFrame, preset));
+      const nextSnapshot = toHudSnapshot(prismFrame, preset);
+      if (!areHudSnapshotsEqual(lastHudSnapshotRef.current, nextSnapshot)) {
+        lastHudSnapshotRef.current = nextSnapshot;
+        setHudSnapshot(nextSnapshot);
+      }
     }
 
     rafRef.current = requestAnimationFrame(renderFrame);
@@ -211,9 +229,9 @@ export function CameraStage() {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: {
-          width: { ideal: 960 },
-          height: { ideal: 540 },
-          frameRate: { ideal: 30, max: 60 },
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          frameRate: { ideal: 30, max: 30 },
           facingMode: 'user',
         },
       });
@@ -233,6 +251,7 @@ export function CameraStage() {
       prismEngineRef.current.reset();
       lastDetectedHandsRef.current = [];
       lastVideoTimeRef.current = -1;
+      feedbackFrameRef.current = 0;
       setIsStarted(true);
       setStatus('Live. Extend fingers to pin a glitch sheet to your hands.');
 
@@ -270,6 +289,7 @@ export function CameraStage() {
 
     prismEngineRef.current.reset();
     lastDetectedHandsRef.current = [];
+    lastHudSnapshotRef.current = EMPTY_HUD;
     setHudSnapshot(EMPTY_HUD);
     setIsStarted(false);
     setStatus('Camera stopped. No frames are uploaded or stored.');
@@ -399,6 +419,10 @@ function getBackgroundFilter(presetId: PresetId, intensity: number) {
   if (presetId === 'dot-matrix') return `contrast(${1.3 + intensity * 0.22}) saturate(0.85)`;
   if (presetId === 'acid-mirror') return `contrast(1.18) saturate(${1.55 + intensity * 0.55}) hue-rotate(18deg)`;
   return `contrast(1.12) saturate(${1.35 + intensity * 0.45})`;
+}
+
+function shouldDrawFeedbackTrails(preset: VisualPreset, intensity: number) {
+  return intensity >= 1.35 && preset.trailAlpha >= 0.12;
 }
 
 function drawStandby(ctx: CanvasRenderingContext2D, width: number, height: number) {
@@ -539,6 +563,21 @@ function toHudSnapshot(frame: PrismFrame, preset: VisualPreset): TechnicalHudSna
     singleFingers: getFingersForHand(frame, 'single'),
     logs: frame.logLines,
   };
+}
+
+function areHudSnapshotsEqual(a: TechnicalHudSnapshot, b: TechnicalHudSnapshot) {
+  return (
+    a.hands === b.hands &&
+    a.anchors === b.anchors &&
+    a.sheetState === b.sheetState &&
+    a.crossing === b.crossing &&
+    Math.abs(a.fps - b.fps) < 2 &&
+    a.preset === b.preset &&
+    a.leftFingers.join('|') === b.leftFingers.join('|') &&
+    a.rightFingers.join('|') === b.rightFingers.join('|') &&
+    a.singleFingers.join('|') === b.singleFingers.join('|') &&
+    a.logs.join('|') === b.logs.join('|')
+  );
 }
 
 function getFingersForHand(frame: PrismFrame, handId: FingerAnchor['handId']) {

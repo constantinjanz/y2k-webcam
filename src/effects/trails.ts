@@ -15,11 +15,9 @@ export function drawFeedbackTrails(
 
   ctx.save();
   ctx.globalCompositeOperation = 'screen';
-  ctx.globalAlpha = alpha;
+  ctx.globalAlpha = alpha * 0.82;
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(feedback, -preset.rgbShift * 0.3, 0, ctx.canvas.width, ctx.canvas.height);
-  ctx.globalAlpha = alpha * 0.72;
-  ctx.drawImage(feedback, preset.rgbShift * 0.45, preset.rgbShift * 0.16, ctx.canvas.width, ctx.canvas.height);
   ctx.restore();
 }
 

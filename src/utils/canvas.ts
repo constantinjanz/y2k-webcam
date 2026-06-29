@@ -39,7 +39,7 @@ export function ensureCanvasSize(canvas: HTMLCanvasElement, width: number, heigh
 }
 
 export function resizeCanvasToDisplaySize(canvas: HTMLCanvasElement) {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const dpr = Math.min(window.devicePixelRatio || 1, 1.25);
   const width = Math.max(1, Math.floor(canvas.clientWidth * dpr));
   const height = Math.max(1, Math.floor(canvas.clientHeight * dpr));
   const changed = canvas.width !== width || canvas.height !== height;
@@ -144,7 +144,7 @@ export function drawGlitchLineNoise(
   intensity: number,
   hue = 176,
 ) {
-  const rows = Math.floor(12 + intensity * 24);
+  const rows = Math.floor(3 + intensity * 8);
 
   ctx.save();
   ctx.globalCompositeOperation = 'screen';
