@@ -8,66 +8,71 @@ type TrackingStreamProps = {
 
 export function TrackingStream({ snapshot, cameraActive, modelReady }: TrackingStreamProps) {
   return (
-    <aside className="tracking-stream" aria-label="Tracking stream">
-      <div className="panel-heading">
-        <span>TRACKING STREAM</span>
-        <span>{snapshot.sheetState}</span>
+    <aside className="os-window tracking-stream" aria-label="Tracking stream">
+      <div className="os-titlebar">
+        <span>Tracking Stream</span>
+        <div className="os-titlebar-buttons" aria-hidden="true">
+          <span>_</span>
+          <span>×</span>
+        </div>
       </div>
 
-      <dl className="readout-grid">
-        <div>
-          <dt>CAMERA</dt>
-          <dd>{cameraActive ? 'ACTIVE' : 'IDLE'}</dd>
-        </div>
-        <div>
-          <dt>MODEL</dt>
-          <dd>{modelReady ? 'HAND_LANDMARKER' : 'WAITING'}</dd>
-        </div>
-        <div>
-          <dt>HANDS</dt>
-          <dd>{snapshot.hands}/2</dd>
-        </div>
-        <div>
-          <dt>ANCHORS</dt>
-          <dd>{snapshot.anchors}/10</dd>
-        </div>
-        <div>
-          <dt>SHEET</dt>
-          <dd>{snapshot.sheetState}</dd>
-        </div>
-        <div>
-          <dt>CROSS</dt>
-          <dd>{snapshot.crossing ? 'DETECTED' : 'CLEAR'}</dd>
-        </div>
-        <div>
-          <dt>MODE</dt>
-          <dd>EXTENDED_FINGER_PRISM</dd>
-        </div>
-        <div>
-          <dt>PRESET</dt>
-          <dd>{snapshot.preset}</dd>
-        </div>
-      </dl>
+      <div className="tracking-body">
+        <dl className="readout-grid">
+          <div>
+            <dt>camera</dt>
+            <dd>{cameraActive ? 'active' : 'idle'}</dd>
+          </div>
+          <div>
+            <dt>model</dt>
+            <dd>{modelReady ? 'hand_landmarker' : 'waiting'}</dd>
+          </div>
+          <div>
+            <dt>hands</dt>
+            <dd>{snapshot.hands}/2</dd>
+          </div>
+          <div>
+            <dt>anchors</dt>
+            <dd>{snapshot.anchors}/10</dd>
+          </div>
+          <div>
+            <dt>sheet</dt>
+            <dd>{snapshot.sheetState.toLowerCase()}</dd>
+          </div>
+          <div>
+            <dt>cross</dt>
+            <dd>{snapshot.crossing ? 'detected' : 'clear'}</dd>
+          </div>
+          <div>
+            <dt>preset</dt>
+            <dd>{snapshot.preset.toLowerCase().replaceAll(' ', '_')}</dd>
+          </div>
+          <div>
+            <dt>fps</dt>
+            <dd>{Math.round(snapshot.fps)}</dd>
+          </div>
+        </dl>
 
-      <div className="finger-lines" aria-label="Active fingers">
-        <p>
-          <span>LEFT</span>
-          <b>{snapshot.leftFingers.length ? snapshot.leftFingers.join(' ') : 'none'}</b>
-        </p>
-        <p>
-          <span>RIGHT</span>
-          <b>{snapshot.rightFingers.length ? snapshot.rightFingers.join(' ') : 'none'}</b>
-        </p>
-        <p>
-          <span>SINGLE</span>
-          <b>{snapshot.singleFingers.length ? snapshot.singleFingers.join(' ') : 'none'}</b>
-        </p>
-      </div>
+        <div className="finger-lines" aria-label="Active fingers">
+          <p>
+            <span>left</span>
+            <b>{snapshot.leftFingers.length ? snapshot.leftFingers.join(' ').toLowerCase() : 'none'}</b>
+          </p>
+          <p>
+            <span>right</span>
+            <b>{snapshot.rightFingers.length ? snapshot.rightFingers.join(' ').toLowerCase() : 'none'}</b>
+          </p>
+          <p>
+            <span>single</span>
+            <b>{snapshot.singleFingers.length ? snapshot.singleFingers.join(' ').toLowerCase() : 'none'}</b>
+          </p>
+        </div>
 
-      <div className="terminal-log" aria-label="Tracking log">
-        {snapshot.logs.map((line, index) => (
-          <p key={`${line}-${index}`}>{line}</p>
-        ))}
+        <div className="terminal-log" aria-label="Tracking log">
+          {snapshot.logs.map((line, index) => (
+            <p key={`${line}-${index}`}>{line}</p>
+          ))}
+        </div>
       </div>
     </aside>
   );

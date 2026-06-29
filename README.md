@@ -1,6 +1,6 @@
-# Glitch Hands / PrismCam
+# tracer_2k
 
-A browser-based creative camera app for real-time Y2K glitch, hacker-webcam, and prism hand-tracking effects.
+A browser-based creative camera app styled like dark Windows 98 webcam tracer software.
 
 Open the app, grant camera access, and extend fingers to pin a live video sheet to your hands. The core interaction is one focused instrument: extended fingertips become anchor points for a dynamic glitch prism.
 
@@ -12,7 +12,7 @@ Open the app, grant camera access, and extend fingers to pin a live video sheet 
 - One prism sheet generated from active fingertip anchors.
 - Triangle, quadrilateral, and multi-point polygon sheet rendering.
 - Crossing/twist distortion when anchor lines fold through each other.
-- Five sheet presets: Prism Rave, Webcam 2004, RGB Ghost, Dot Matrix, and Acid Mirror.
+- Five sheet style families: Xerox Rave, Club Flyer, Webcam 2001, Dirty Scanner, and Acid Broadcast.
 - Technical tracking stream with real hand, finger, anchor, sheet, FPS, and crossing state.
 - Optional debug hand landmarks and fingertip labels.
 - Canvas recording/export through `canvas.captureStream()` and `MediaRecorder`.

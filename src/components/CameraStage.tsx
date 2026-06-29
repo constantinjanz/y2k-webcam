@@ -87,7 +87,7 @@ export function CameraStage() {
 
   const [isStarted, setIsStarted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [status, setStatus] = useState('Camera idle. Frames stay in this browser.');
+  const [status, setStatus] = useState('BOOT WAIT: camera module idle');
   const [error, setError] = useState('');
   const [presetId, setPresetId] = useState<PresetId>('xerox-rave');
   const [debug, setDebug] = useState(false);
@@ -223,7 +223,7 @@ export function CameraStage() {
 
     setIsLoading(true);
     setError('');
-    setStatus('Requesting camera permission...');
+      setStatus('REQUESTING CAMERA DEVICE...');
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -243,7 +243,7 @@ export function CameraStage() {
       await video.play();
 
       if (!trackerRef.current) {
-        setStatus('Loading hand model...');
+        setStatus('LOADING HAND_LANDMARKER MODULE...');
         trackerRef.current = await createHandTracker();
         modelReadyRef.current = true;
       }
@@ -253,7 +253,7 @@ export function CameraStage() {
       lastVideoTimeRef.current = -1;
       feedbackFrameRef.current = 0;
       setIsStarted(true);
-      setStatus('Live. Extend fingers to pin a glitch sheet to your hands.');
+      setStatus('TRACE ONLINE: extend fingers to pin the video sheet');
 
       if (rafRef.current === null) {
         rafRef.current = requestAnimationFrame(renderFrame);
@@ -261,7 +261,7 @@ export function CameraStage() {
     } catch (cameraError) {
       console.error(cameraError);
       setError('Camera or hand model could not start. Check permission and network access for the MediaPipe model.');
-      setStatus('Camera idle. Frames stay in this browser.');
+      setStatus('BOOT FAILED: camera module idle');
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     } finally {
@@ -292,7 +292,7 @@ export function CameraStage() {
     lastHudSnapshotRef.current = EMPTY_HUD;
     setHudSnapshot(EMPTY_HUD);
     setIsStarted(false);
-    setStatus('Camera stopped. No frames are uploaded or stored.');
+    setStatus('TRACE STOPPED: local camera stream closed');
   }, [recorder]);
 
   useEffect(() => {
@@ -310,12 +310,51 @@ export function CameraStage() {
     };
   }, [renderFrame]);
 
-  return (
-    <section className="camera-shell" aria-label="Glitch Hands live camera app">
-      <video ref={videoRef} className="camera-video" aria-hidden="true" />
-      <canvas ref={canvasRef} className="camera-canvas" />
+  const activeError = error || recorder.error;
+  const warningMessage = getTrackingWarning(isStarted, hudSnapshot);
 
-      <div className="scanline-overlay" aria-hidden="true" />
+  return (
+    <section className="camera-shell" aria-label="tracer_2k live camera app">
+      <video ref={videoRef} className="camera-video" aria-hidden="true" />
+      <div className="desktop-noise" aria-hidden="true" />
+
+      <div className="desktop-label">
+        <span className="desktop-icon" aria-hidden="true" />
+        <div>
+          <b>tracer_2k</b>
+          <span>local vision desktop</span>
+        </div>
+      </div>
+
+      <div className="os-window main-camera-window" aria-label="tracer_2k camera window">
+        <div className="os-titlebar">
+          <span>tracer_2k.exe</span>
+          <div className="os-titlebar-buttons" aria-hidden="true">
+            <span>_</span>
+            <span>□</span>
+            <span>×</span>
+          </div>
+        </div>
+        <div className="os-menubar" aria-hidden="true">
+          <span>FILE</span>
+          <span>VIEW</span>
+          <span>TRACKING</span>
+          <span>EFFECTS</span>
+          <span>SYSTEM</span>
+        </div>
+        <div className="camera-viewport">
+          <canvas ref={canvasRef} className="camera-canvas" />
+          <div className="scanline-overlay" aria-hidden="true" />
+        </div>
+        <div className="os-statusbar">
+          <span>anchors: {padCount(hudSnapshot.anchors)}</span>
+          <span>hands: {padCount(hudSnapshot.hands)}</span>
+          <span>sheet: {hudSnapshot.sheetState}</span>
+          <span>fps: {Math.round(hudSnapshot.fps)}</span>
+          <span className="status-grip" aria-hidden="true" />
+        </div>
+      </div>
+
       <TechnicalHud
         snapshot={hudSnapshot}
         cameraActive={isStarted}
@@ -323,91 +362,184 @@ export function CameraStage() {
         isRecording={recorder.isRecording}
       />
 
-      {!isStarted && (
-        <div className="start-panel">
-          <p className="eyebrow">computer vision / prism mesh</p>
-          <h1>Glitch Hands</h1>
-          <p className="tagline">Extend fingers to anchor a live Y2K glitch sheet.</p>
-          <button className="primary-button" type="button" onClick={startCamera} disabled={isLoading}>
-            {isLoading ? 'Starting...' : 'Start Camera'}
-          </button>
-          <p className="privacy-copy">Camera stays local in your browser. No uploads. No backend.</p>
-          {error && <p className="error-copy">{error}</p>}
+      <div className="os-window system-message-window">
+        <div className="os-titlebar">
+          <span>System Message</span>
+          <div className="os-titlebar-buttons" aria-hidden="true">
+            <span>×</span>
+          </div>
         </div>
-      )}
-
-      <div className="top-chrome">
-        <div>
-          <p className="app-kicker">PrismCam / Finger Anchor Mesh</p>
-          <p className="status-line">{status}</p>
-        </div>
-        <div className="meter" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-          <span />
-          <span />
+        <div className="os-dialog-body compact-dialog">
+          <span className="os-icon-info" aria-hidden="true">i</span>
+          <div>
+            <p>tracer_2k camera module {isStarted ? 'loaded' : 'standing by'}</p>
+            <button className="os-button mini-button" type="button" disabled>
+              OK
+            </button>
+          </div>
         </div>
       </div>
 
+      {warningMessage && (
+        <div className="os-window warning-window" role="status" aria-live="polite">
+          <div className="os-titlebar warning-titlebar">
+            <span>Warning</span>
+            <div className="os-titlebar-buttons" aria-hidden="true">
+              <span>×</span>
+            </div>
+          </div>
+          <div className="os-dialog-body compact-dialog">
+            <span className="os-icon-warning" aria-hidden="true" />
+            <p>{warningMessage}</p>
+          </div>
+        </div>
+      )}
+
+      {activeError && (
+        <div className="os-window error-window" role="alert">
+          <div className="os-titlebar error-titlebar">
+            <span>tracer_2k error</span>
+            <div className="os-titlebar-buttons" aria-hidden="true">
+              <span>×</span>
+            </div>
+          </div>
+          <div className="os-dialog-body">
+            <span className="os-icon-error" aria-hidden="true">×</span>
+            <p>{activeError}</p>
+          </div>
+        </div>
+      )}
+
+      <div className="os-window progress-window">
+        <div className="os-titlebar">
+          <span>{recorder.isRecording ? 'Recording [REC]' : 'Rendering [72%]'}</span>
+          <div className="os-titlebar-buttons" aria-hidden="true">
+            <span>_</span>
+            <span>×</span>
+          </div>
+        </div>
+        <div className="progress-body">
+          <div className={recorder.isRecording ? 'os-progress recording' : 'os-progress'} aria-hidden="true">
+            <span />
+            <span />
+            <span />
+            <span />
+            <span />
+            <span />
+            <span />
+            <span />
+          </div>
+          <p>{recorder.isRecording ? 'canvas capture stream writing to buffer' : status}</p>
+        </div>
+      </div>
+
+      {!isStarted && (
+        <div className="os-window start-panel" role="dialog" aria-modal="true" aria-label="tracer_2k setup">
+          <div className="os-titlebar">
+            <span>tracer_2k setup</span>
+            <div className="os-titlebar-buttons" aria-hidden="true">
+              <span>×</span>
+            </div>
+          </div>
+          <div className="setup-body">
+            <span className="os-icon-info large-icon" aria-hidden="true">i</span>
+            <div className="setup-copy">
+              <h1>tracer_2k</h1>
+              <p>tracer_2k requires camera access.</p>
+              <p>Initialize hand tracking module?</p>
+              <div className="privacy-grid" aria-label="Privacy status">
+                <span>LOCAL MODE: ON</span>
+                <span>UPLOADS: DISABLED</span>
+                <span>BACKEND: NONE</span>
+              </div>
+              <div className="button-row setup-buttons">
+                <button className="os-button primary-button" type="button" onClick={startCamera} disabled={isLoading}>
+                  {isLoading ? 'Booting...' : 'Boot tracer_2k'}
+                </button>
+                <button className="os-button secondary-button" type="button" onClick={() => setStatus('SETUP CANCELLED: camera module idle')}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isStarted && (
-        <div className="control-deck" aria-label="Camera controls">
-          <label className="control-field">
-            <span>Preset</span>
-            <select value={presetId} onChange={(event) => setPresetId(event.target.value as PresetId)}>
-              {PRESETS.map((presetOption) => (
-                <option key={presetOption.id} value={presetOption.id}>
-                  {presetOption.label}
-                </option>
-              ))}
-            </select>
-          </label>
+        <>
+          <div className="os-window control-deck effect-palette-window" aria-label="Effect palette">
+            <div className="os-titlebar">
+              <span>Effect Palette</span>
+              <div className="os-titlebar-buttons" aria-hidden="true">
+                <span>_</span>
+                <span>×</span>
+              </div>
+            </div>
+            <div className="control-body">
+              <label className="control-field">
+                <span>Preset</span>
+                <select value={presetId} onChange={(event) => setPresetId(event.target.value as PresetId)}>
+                  {PRESETS.map((presetOption) => (
+                    <option key={presetOption.id} value={presetOption.id}>
+                      {presetOption.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          <label className="control-field slider-field">
-            <span>Sensitivity</span>
-            <input
-              type="range"
-              min="0.55"
-              max="1.65"
-              step="0.05"
-              value={sensitivity}
-              onChange={(event) => setSensitivity(Number(event.target.value))}
-            />
-          </label>
+              <label className="control-field slider-field">
+                <span>Sensitivity</span>
+                <input
+                  type="range"
+                  min="0.55"
+                  max="1.65"
+                  step="0.05"
+                  value={sensitivity}
+                  onChange={(event) => setSensitivity(Number(event.target.value))}
+                />
+              </label>
 
-          <label className="control-field slider-field">
-            <span>Intensity</span>
-            <input
-              type="range"
-              min="0.4"
-              max="1.8"
-              step="0.05"
-              value={intensity}
-              onChange={(event) => setIntensity(Number(event.target.value))}
-            />
-          </label>
+              <label className="control-field slider-field">
+                <span>Intensity</span>
+                <input
+                  type="range"
+                  min="0.4"
+                  max="1.8"
+                  step="0.05"
+                  value={intensity}
+                  onChange={(event) => setIntensity(Number(event.target.value))}
+                />
+              </label>
 
-          <label className="toggle-field">
-            <input type="checkbox" checked={debug} onChange={(event) => setDebug(event.target.checked)} />
-            <span>Debug landmarks</span>
-          </label>
-
-          <div className="button-row">
-            <button className="secondary-button" type="button" onClick={stopCamera}>
-              Stop Camera
-            </button>
-            <button
-              className="record-button"
-              type="button"
-              onClick={recorder.isRecording ? recorder.stopRecording : recorder.startRecording}
-              disabled={!recorder.isSupported}
-            >
-              {recorder.isRecording ? 'Stop Recording' : 'Record'}
-            </button>
+              <label className="toggle-field">
+                <input type="checkbox" checked={debug} onChange={(event) => setDebug(event.target.checked)} />
+                <span>Debug landmarks</span>
+              </label>
+            </div>
           </div>
 
-          {(recorder.error || error) && <p className="error-copy compact">{recorder.error || error}</p>}
-        </div>
+          <div className="os-window transport-window" aria-label="Transport controls">
+            <div className="os-titlebar">
+              <span>Transport</span>
+              <div className="os-titlebar-buttons" aria-hidden="true">
+                <span>×</span>
+              </div>
+            </div>
+            <div className="transport-body">
+              <button className="os-button secondary-button" type="button" onClick={stopCamera}>
+                Stop Camera
+              </button>
+              <button
+                className="os-button record-button"
+                type="button"
+                onClick={recorder.isRecording ? recorder.stopRecording : recorder.startRecording}
+                disabled={!recorder.isSupported}
+              >
+                {recorder.isRecording ? 'Stop Recording' : 'Record'}
+              </button>
+            </div>
+          </div>
+        </>
       )}
     </section>
   );
@@ -423,6 +555,17 @@ function getBackgroundFilter(presetId: PresetId, intensity: number) {
 
 function shouldDrawFeedbackTrails(preset: VisualPreset, intensity: number) {
   return intensity >= 1.35 && preset.trailAlpha >= 0.12;
+}
+
+function padCount(value: number) {
+  return String(value).padStart(2, '0');
+}
+
+function getTrackingWarning(isStarted: boolean, snapshot: TechnicalHudSnapshot) {
+  if (!isStarted || snapshot.sheetState === 'ACTIVE') return '';
+  if (snapshot.hands === 0) return 'No hands detected';
+  if (snapshot.anchors < 3) return 'No anchors detected';
+  return 'Tracking unstable';
 }
 
 function drawStandby(ctx: CanvasRenderingContext2D, width: number, height: number) {
