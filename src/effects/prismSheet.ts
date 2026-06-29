@@ -19,7 +19,7 @@ type FilterOptions = {
   rgbBoost?: number;
 };
 
-const PANEL_SEQUENCE: FilterMode[] = ['thermal', 'xerox', 'night', 'compressed', 'surveillance'];
+const PANEL_SEQUENCE: FilterMode[] = ['berlin', 'surveillance', 'compressed', 'xerox', 'virus', 'thermal', 'night'];
 const mappedCanvases = new Map<string, HTMLCanvasElement>();
 
 export function drawPrismSheet(
@@ -332,9 +332,11 @@ function getReusableCanvas(key: string, width: number, height: number) {
 
 function getPaletteForMode(preset: VisualPreset, mode: FilterMode) {
   if (mode === preset.filterMode) return preset.palette;
+  if (mode === 'berlin') return ['#02020a', '#10107a', '#004cff', '#00f0ff', '#f0ff00', '#ff3d00', '#ffffff'];
   if (mode === 'night') return ['#000400', '#003414', '#008c32', '#65ff3e', '#eaff85'];
   if (mode === 'xerox') return ['#050505', '#282828', '#d9d2c0', '#ffffff', preset.secondary];
   if (mode === 'compressed') return ['#050816', '#1d2b54', '#4078a8', '#d6fff3', preset.secondary];
+  if (mode === 'virus') return ['#000000', '#0012a8', '#ff1010', '#ffdf00', '#ffffff'];
   if (mode === 'surveillance') return ['#000306', '#003953', '#00a6a6', '#c5ff00', '#ff3d00', '#ffffff'];
   return ['#020214', '#15147a', '#6f18bd', '#e21d26', '#ff7a00', '#ffe600', '#ffffff'];
 }
@@ -345,7 +347,9 @@ function applyModeCurve(value: number, mode: FilterMode, contrast: number) {
   if (mode === 'night') return Math.pow(curved, 0.72);
   if (mode === 'xerox') return curved > 0.56 ? 1 : curved > 0.36 ? 0.55 : 0;
   if (mode === 'compressed') return Math.floor(curved * 5) / 5;
+  if (mode === 'virus') return curved > 0.72 ? 1 : curved > 0.5 ? 0.68 : curved > 0.24 ? 0.34 : 0;
   if (mode === 'surveillance') return Math.pow(curved, 0.86);
+  if (mode === 'berlin') return Math.pow(curved, 0.74);
   return Math.pow(curved, 0.78);
 }
 
@@ -354,7 +358,9 @@ function getCanvasFilter(mode: FilterMode, preset: VisualPreset, intensity: numb
   if (mode === 'night') return `contrast(${1.12 + intensity * 0.14}) saturate(1.2) brightness(0.92)${invertFilter}`;
   if (mode === 'xerox') return `contrast(${1.38 + intensity * 0.2}) saturate(0.72) brightness(1.02)${invertFilter}`;
   if (mode === 'compressed') return `contrast(${1.08 + intensity * 0.12}) saturate(1.28) brightness(0.98)${invertFilter}`;
+  if (mode === 'virus') return `contrast(${1.48 + intensity * 0.2}) saturate(1.85) brightness(0.9)${invertFilter}`;
   if (mode === 'surveillance') return `contrast(${1.28 + intensity * 0.2}) saturate(1.45) brightness(0.94)${invertFilter}`;
+  if (mode === 'berlin') return `contrast(${1.22 + preset.contrast * 0.13 + intensity * 0.16}) saturate(1.6) brightness(0.95)${invertFilter}`;
   return `contrast(${1.22 + preset.contrast * 0.12 + intensity * 0.16}) saturate(1.45) brightness(0.96)${invertFilter}`;
 }
 

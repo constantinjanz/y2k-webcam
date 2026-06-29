@@ -56,7 +56,7 @@ const EMPTY_HUD: TechnicalHudSnapshot = {
   sheetState: 'INACTIVE',
   crossing: false,
   fps: 0,
-  preset: 'Thermal Rave',
+  preset: 'Berlin Rave',
   leftFingers: [],
   rightFingers: [],
   singleFingers: [],
@@ -79,8 +79,8 @@ export function CameraStage() {
   const startedRef = useRef(false);
   const modelReadyRef = useRef(false);
   const settingsRef = useRef<CameraSettings>({
-    presetId: 'thermal-rave',
-    debug: false,
+    presetId: 'berlin-rave',
+    debug: true,
     sensitivity: 1,
     intensity: 1,
   });
@@ -89,8 +89,8 @@ export function CameraStage() {
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState('BOOT WAIT: camera module idle');
   const [error, setError] = useState('');
-  const [presetId, setPresetId] = useState<PresetId>('thermal-rave');
-  const [debug, setDebug] = useState(false);
+  const [presetId, setPresetId] = useState<PresetId>('berlin-rave');
+  const [debug, setDebug] = useState(true);
   const [sensitivity, setSensitivity] = useState(1);
   const [intensity, setIntensity] = useState(1);
   const [hudSnapshot, setHudSnapshot] = useState<TechnicalHudSnapshot>(EMPTY_HUD);
@@ -477,7 +477,7 @@ export function CameraStage() {
             </div>
             <div className="control-body">
               <label className="control-field">
-                <span>Preset</span>
+                <span>FILTER MODE</span>
                 <select value={presetId} onChange={(event) => setPresetId(event.target.value as PresetId)}>
                   {PRESETS.map((presetOption) => (
                     <option key={presetOption.id} value={presetOption.id}>
@@ -486,6 +486,7 @@ export function CameraStage() {
                   ))}
                 </select>
               </label>
+              <p className="control-status">STATUS: VIDEO FILTER</p>
 
               <label className="control-field slider-field">
                 <span>Sensitivity</span>
@@ -546,10 +547,12 @@ export function CameraStage() {
 }
 
 function getBackgroundFilter(presetId: PresetId, intensity: number) {
+  if (presetId === 'hacker-surveillance') return `contrast(${1.2 + intensity * 0.16}) saturate(0.72) brightness(0.9)`;
   if (presetId === 'night-vision') return `contrast(${1.2 + intensity * 0.16}) saturate(0.72) brightness(0.9)`;
-  if (presetId === 'xerox-flyer') return `contrast(${1.32 + intensity * 0.18}) saturate(0.44) brightness(0.9)`;
+  if (presetId === 'dirty-photocopy') return `contrast(${1.32 + intensity * 0.18}) saturate(0.44) brightness(0.9)`;
   if (presetId === 'webcam-2001') return `contrast(${1.22 + intensity * 0.14}) saturate(0.7) brightness(0.94)`;
-  if (presetId === 'surveillance-heat') return `contrast(1.22) saturate(${1.05 + intensity * 0.26}) brightness(0.9)`;
+  if (presetId === 'old-virus') return `contrast(${1.36 + intensity * 0.18}) saturate(1.2) brightness(0.88)`;
+  if (presetId === 'thermal-rave') return `contrast(1.22) saturate(${1.05 + intensity * 0.26}) brightness(0.9)`;
   return `contrast(${1.18 + intensity * 0.14}) saturate(0.88) brightness(0.9)`;
 }
 
