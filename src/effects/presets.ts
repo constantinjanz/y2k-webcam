@@ -1,8 +1,11 @@
-export type PresetId = 'xerox-rave' | 'club-flyer' | 'webcam-2001' | 'dirty-scanner' | 'acid-broadcast';
+export type FilterMode = 'thermal' | 'night' | 'xerox' | 'compressed' | 'surveillance';
+export type PresetId = 'thermal-rave' | 'night-vision' | 'xerox-flyer' | 'webcam-2001' | 'surveillance-heat';
 
 export type VisualPreset = {
   id: PresetId;
   label: string;
+  filterMode: FilterMode;
+  palette: string[];
   backgroundTint: string;
   accent: string;
   secondary: string;
@@ -10,119 +13,87 @@ export type VisualPreset = {
   rgbShift: number;
   trailAlpha: number;
   noise: number;
-  paper: string;
-  ink: string;
-  halftone: string;
-  xerox: string;
-  acid: string;
-  grain: number;
+  contrast: number;
   scanlines: number;
-  rgbTear: number;
-  panelContrast: number;
   timestamp?: boolean;
 };
 
 export const PRESETS: VisualPreset[] = [
   {
-    id: 'xerox-rave',
-    label: 'Xerox Rave',
-    backgroundTint: 'rgba(6, 8, 7, 0.24)',
+    id: 'thermal-rave',
+    label: 'Thermal Rave',
+    filterMode: 'thermal',
+    palette: ['#020214', '#15147a', '#6f18bd', '#e21d26', '#ff7a00', '#ffe600', '#ffffff'],
+    backgroundTint: 'rgba(8, 4, 16, 0.24)',
     accent: '#00e7ff',
-    secondary: '#ff2a2a',
-    pixelScale: 0.16,
-    rgbShift: 9,
+    secondary: '#ff3d00',
+    pixelScale: 0.15,
+    rgbShift: 12,
     trailAlpha: 0.1,
-    noise: 0.5,
-    paper: '#f3efd8',
-    ink: '#050505',
-    halftone: '#e11522',
-    xerox: '#0f67ff',
-    acid: '#c9ff1a',
-    grain: 0.8,
-    scanlines: 0.6,
-    rgbTear: 0.75,
-    panelContrast: 1.4,
+    noise: 0.48,
+    contrast: 1.32,
+    scanlines: 0.52,
   },
   {
-    id: 'club-flyer',
-    label: 'Club Flyer',
-    backgroundTint: 'rgba(14, 8, 4, 0.28)',
-    accent: '#ffe600',
-    secondary: '#f21616',
-    pixelScale: 0.14,
-    rgbShift: 7,
-    trailAlpha: 0.08,
-    noise: 0.62,
-    paper: '#fff2c6',
-    ink: '#050403',
-    halftone: '#ef1717',
-    xerox: '#1636f5',
-    acid: '#ffe600',
-    grain: 0.9,
-    scanlines: 0.48,
-    rgbTear: 0.55,
-    panelContrast: 1.55,
+    id: 'night-vision',
+    label: 'Night Vision',
+    filterMode: 'night',
+    palette: ['#000700', '#003414', '#008c32', '#6fff3e', '#e5ff8e'],
+    backgroundTint: 'rgba(0, 16, 5, 0.28)',
+    accent: '#38ff9c',
+    secondary: '#d9ff5e',
+    pixelScale: 0.13,
+    rgbShift: 4,
+    trailAlpha: 0.06,
+    noise: 0.54,
+    contrast: 1.26,
+    scanlines: 0.9,
+  },
+  {
+    id: 'xerox-flyer',
+    label: 'Xerox Flyer',
+    filterMode: 'xerox',
+    palette: ['#050505', '#2b2b2b', '#e8e2d0', '#ffffff', '#ff2626'],
+    backgroundTint: 'rgba(12, 10, 8, 0.3)',
+    accent: '#f4ead4',
+    secondary: '#ff2626',
+    pixelScale: 0.12,
+    rgbShift: 5,
+    trailAlpha: 0.05,
+    noise: 0.7,
+    contrast: 1.58,
+    scanlines: 0.46,
   },
   {
     id: 'webcam-2001',
     label: 'Webcam 2001',
-    backgroundTint: 'rgba(0, 12, 10, 0.28)',
-    accent: '#69ffd4',
-    secondary: '#d8fff5',
-    pixelScale: 0.11,
-    rgbShift: 5,
-    trailAlpha: 0.06,
-    noise: 0.72,
-    paper: '#dff8ef',
-    ink: '#071614',
-    halftone: '#ff4040',
-    xerox: '#00a7d8',
-    acid: '#99ff55',
-    grain: 0.72,
-    scanlines: 0.85,
-    rgbTear: 0.42,
-    panelContrast: 1.25,
+    filterMode: 'compressed',
+    palette: ['#050816', '#20415f', '#4fa7d8', '#d7fff1', '#ff4a3d'],
+    backgroundTint: 'rgba(0, 12, 18, 0.26)',
+    accent: '#6fd8ff',
+    secondary: '#ff4a3d',
+    pixelScale: 0.09,
+    rgbShift: 6,
+    trailAlpha: 0.05,
+    noise: 0.5,
+    contrast: 1.18,
+    scanlines: 0.4,
     timestamp: true,
   },
   {
-    id: 'dirty-scanner',
-    label: 'Dirty Scanner',
-    backgroundTint: 'rgba(12, 10, 8, 0.32)',
-    accent: '#f4ead4',
-    secondary: '#c91818',
-    pixelScale: 0.13,
-    rgbShift: 4,
-    trailAlpha: 0.04,
-    noise: 0.82,
-    paper: '#ede1c6',
-    ink: '#060504',
-    halftone: '#b71313',
-    xerox: '#4a5f7f',
-    acid: '#d6d6c8',
-    grain: 1,
-    scanlines: 0.7,
-    rgbTear: 0.28,
-    panelContrast: 1.65,
-  },
-  {
-    id: 'acid-broadcast',
-    label: 'Acid Broadcast',
-    backgroundTint: 'rgba(0, 12, 4, 0.24)',
-    accent: '#d7ff00',
-    secondary: '#008cff',
-    pixelScale: 0.15,
-    rgbShift: 11,
-    trailAlpha: 0.11,
-    noise: 0.58,
-    paper: '#efffd8',
-    ink: '#071107',
-    halftone: '#ff2626',
-    xerox: '#008cff',
-    acid: '#b6ff00',
-    grain: 0.76,
-    scanlines: 0.9,
-    rgbTear: 0.85,
-    panelContrast: 1.48,
+    id: 'surveillance-heat',
+    label: 'Surveillance Heat',
+    filterMode: 'surveillance',
+    palette: ['#000306', '#003953', '#00a6a6', '#c5ff00', '#ff3d00', '#ffffff'],
+    backgroundTint: 'rgba(0, 9, 12, 0.28)',
+    accent: '#8bbcff',
+    secondary: '#c5ff00',
+    pixelScale: 0.14,
+    rgbShift: 9,
+    trailAlpha: 0.08,
+    noise: 0.56,
+    contrast: 1.4,
+    scanlines: 0.68,
   },
 ];
 

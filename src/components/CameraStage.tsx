@@ -56,7 +56,7 @@ const EMPTY_HUD: TechnicalHudSnapshot = {
   sheetState: 'INACTIVE',
   crossing: false,
   fps: 0,
-  preset: 'Xerox Rave',
+  preset: 'Thermal Rave',
   leftFingers: [],
   rightFingers: [],
   singleFingers: [],
@@ -79,7 +79,7 @@ export function CameraStage() {
   const startedRef = useRef(false);
   const modelReadyRef = useRef(false);
   const settingsRef = useRef<CameraSettings>({
-    presetId: 'xerox-rave',
+    presetId: 'thermal-rave',
     debug: false,
     sensitivity: 1,
     intensity: 1,
@@ -89,7 +89,7 @@ export function CameraStage() {
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState('BOOT WAIT: camera module idle');
   const [error, setError] = useState('');
-  const [presetId, setPresetId] = useState<PresetId>('xerox-rave');
+  const [presetId, setPresetId] = useState<PresetId>('thermal-rave');
   const [debug, setDebug] = useState(false);
   const [sensitivity, setSensitivity] = useState(1);
   const [intensity, setIntensity] = useState(1);
@@ -546,11 +546,11 @@ export function CameraStage() {
 }
 
 function getBackgroundFilter(presetId: PresetId, intensity: number) {
-  if (presetId === 'club-flyer') return `contrast(${1.18 + intensity * 0.16}) saturate(0.84) brightness(0.9)`;
+  if (presetId === 'night-vision') return `contrast(${1.2 + intensity * 0.16}) saturate(0.72) brightness(0.9)`;
+  if (presetId === 'xerox-flyer') return `contrast(${1.32 + intensity * 0.18}) saturate(0.44) brightness(0.9)`;
   if (presetId === 'webcam-2001') return `contrast(${1.22 + intensity * 0.14}) saturate(0.7) brightness(0.94)`;
-  if (presetId === 'dirty-scanner') return `contrast(${1.34 + intensity * 0.18}) saturate(0.38) brightness(0.88)`;
-  if (presetId === 'acid-broadcast') return `contrast(1.18) saturate(${1.2 + intensity * 0.32}) brightness(0.92)`;
-  return `contrast(${1.2 + intensity * 0.15}) saturate(0.78) brightness(0.9)`;
+  if (presetId === 'surveillance-heat') return `contrast(1.22) saturate(${1.05 + intensity * 0.26}) brightness(0.9)`;
+  return `contrast(${1.18 + intensity * 0.14}) saturate(0.88) brightness(0.9)`;
 }
 
 function shouldDrawFeedbackTrails(preset: VisualPreset, intensity: number) {

@@ -1,25 +1,26 @@
 import type { PrismFrame } from '../vision/prismEngine';
-import { clipPolygon } from '../utils/canvas';
+import { clipPolygon, ensureCanvasSize } from '../utils/canvas';
 import { clamp, polygonCenter, type Point } from '../utils/math';
 import { drawCrossingEffect } from './crossingEffect';
-import type { VisualPreset } from './presets';
+import type { FilterMode, VisualPreset } from './presets';
 
-type VideoSample = {
+type SourceSample = {
   data: Uint8ClampedArray;
   width: number;
   height: number;
-} | null;
-
-type Bounds = {
-  minX: number;
-  minY: number;
-  maxX: number;
-  maxY: number;
 };
 
-type PanelKind = 'xerox' | 'halftone' | 'acid' | 'scanner';
+type FilterOptions = {
+  mode: FilterMode;
+  alpha: number;
+  intensity: number;
+  motion: number;
+  invert?: boolean;
+  rgbBoost?: number;
+};
 
-const PANEL_SEQUENCE: PanelKind[] = ['xerox', 'halftone', 'acid', 'scanner'];
+const PANEL_SEQUENCE: FilterMode[] = ['thermal', 'xerox', 'night', 'compressed', 'surveillance'];
+const mappedCanvases = new Map<string, HTMLCanvasElement>();
 
 export function drawPrismSheet(
   ctx: CanvasRenderingContext2D,
@@ -31,230 +32,119 @@ export function drawPrismSheet(
 ) {
   if (!prism.renderActive || prism.decay <= 0 || prism.points.length < 3) return;
 
-  const points = prism.points;
   const alpha = clamp(prism.decay, 0, 1);
+  const points = prism.points;
   const center = polygonCenter(points);
-  const panels = buildTrianglePanels(points, center);
-  const videoSample = getVideoSample(pixelBuffer);
   const motion = clamp(prism.motion / 48, 0, 1);
+  const sample = readSourceSample(pixelBuffer);
 
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.lineJoin = 'miter';
   ctx.imageSmoothingEnabled = false;
 
-  drawPaperBase(ctx, points, preset, alpha);
-  drawWholeSheetPrint(ctx, pixelBuffer, points, preset, timeMs, intensity, motion, alpha);
-  drawPanelTreatments(ctx, pixelBuffer, videoSample, panels, preset, timeMs, intensity, motion, alpha);
-  drawPaperGrain(ctx, points, preset, timeMs, intensity, alpha);
-  drawSheetScanlines(ctx, points, preset, intensity, alpha);
+  drawFilteredVideoClip(ctx, pixelBuffer, sample, points, preset, {
+    mode: preset.filterMode,
+    alpha,
+    intensity,
+    motion,
+  });
+
+  drawVideoPanelFilters(ctx, pixelBuffer, sample, points, center, preset, timeMs, intensity, motion, alpha);
+  drawVideoTexture(ctx, points, preset, timeMs, intensity, alpha);
   drawFoldLines(ctx, prism, preset, alpha, intensity);
 
   if (prism.crossing) {
     drawCrossingEffect(ctx, pixelBuffer, prism, preset, timeMs, intensity);
   }
 
-  drawSharpFrame(ctx, prism, preset, alpha, intensity);
+  drawCleanPrismEdges(ctx, prism, preset, alpha, intensity);
   ctx.restore();
 }
 
-function drawPaperBase(ctx: CanvasRenderingContext2D, points: Point[], preset: VisualPreset, alpha: number) {
-  ctx.save();
-  clipPolygon(ctx, points);
-  ctx.globalAlpha = alpha;
-  ctx.fillStyle = preset.paper;
-  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-
-  ctx.globalCompositeOperation = 'multiply';
-  ctx.globalAlpha = alpha * 0.12;
-  ctx.fillStyle = preset.ink;
-  const bounds = getBounds(points);
-  const seed = Math.round((bounds.minX + bounds.minY + bounds.maxX) * 0.17);
-  for (let index = 0; index < 24; index += 1) {
-    const x = bounds.minX + seededNoise(seed, index) * (bounds.maxX - bounds.minX);
-    const y = bounds.minY + seededNoise(seed + 19, index) * (bounds.maxY - bounds.minY);
-    ctx.fillRect(x, y, 1 + seededNoise(seed + 37, index) * 3, 1);
-  }
-
-  ctx.restore();
-}
-
-function drawWholeSheetPrint(
+function drawVideoPanelFilters(
   ctx: CanvasRenderingContext2D,
   pixelBuffer: HTMLCanvasElement,
+  sample: SourceSample | null,
   points: Point[],
+  center: Point,
   preset: VisualPreset,
   timeMs: number,
   intensity: number,
   motion: number,
   alpha: number,
 ) {
-  const tear = preset.rgbTear * preset.rgbShift * (0.25 + motion * 0.5) * intensity;
-  const rowOffset = Math.sin(timeMs * 0.006) * tear * 0.45;
+  if (points.length < 4) return;
 
-  ctx.save();
-  clipPolygon(ctx, points);
-  ctx.imageSmoothingEnabled = false;
-  ctx.filter = `grayscale(0.45) contrast(${preset.panelContrast + intensity * 0.22}) brightness(1.08) saturate(0.62)`;
-  ctx.globalAlpha = alpha * 0.52;
-  ctx.globalCompositeOperation = 'multiply';
-  ctx.drawImage(pixelBuffer, rowOffset, 0, ctx.canvas.width, ctx.canvas.height);
+  const panels = points.map((point, index) => [center, point, points[(index + 1) % points.length]]);
+  const panelAlpha = clamp(0.22 + points.length * 0.025 + intensity * 0.08, 0.2, 0.48);
 
-  ctx.globalCompositeOperation = 'screen';
-  ctx.globalAlpha = alpha * 0.18;
-  ctx.fillStyle = preset.xerox;
-  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-
-  ctx.globalCompositeOperation = 'multiply';
-  ctx.globalAlpha = alpha * 0.2;
-  ctx.fillStyle = preset.ink;
-  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-  ctx.restore();
-}
-
-function drawPanelTreatments(
-  ctx: CanvasRenderingContext2D,
-  pixelBuffer: HTMLCanvasElement,
-  sample: VideoSample,
-  panels: Point[][],
-  preset: VisualPreset,
-  timeMs: number,
-  intensity: number,
-  motion: number,
-  alpha: number,
-) {
   panels.forEach((panel, index) => {
-    const kind = PANEL_SEQUENCE[index % PANEL_SEQUENCE.length];
-    if (kind === 'xerox') drawXeroxPanel(ctx, pixelBuffer, panel, preset, timeMs, intensity, alpha);
-    if (kind === 'halftone') drawHalftonePanel(ctx, sample, panel, preset, timeMs, intensity, alpha);
-    if (kind === 'acid') drawAcidPanel(ctx, pixelBuffer, panel, preset, timeMs, intensity, motion, alpha);
-    if (kind === 'scanner') drawScannerPanel(ctx, pixelBuffer, panel, preset, timeMs, intensity, alpha);
+    const mode = getPanelMode(preset.filterMode, index);
+    drawFilteredVideoClip(ctx, pixelBuffer, sample, panel, preset, {
+      mode,
+      alpha: alpha * panelAlpha,
+      intensity: intensity * 0.9,
+      motion,
+      rgbBoost: index % 2 ? 0.4 : 0.12,
+    });
   });
-}
 
-function drawXeroxPanel(
-  ctx: CanvasRenderingContext2D,
-  pixelBuffer: HTMLCanvasElement,
-  panel: Point[],
-  preset: VisualPreset,
-  timeMs: number,
-  intensity: number,
-  alpha: number,
-) {
-  ctx.save();
-  clipPolygon(ctx, panel);
-  ctx.imageSmoothingEnabled = false;
-  ctx.globalAlpha = alpha * 0.5;
-  ctx.filter = `grayscale(0.85) contrast(${1.55 + preset.panelContrast * 0.25}) brightness(1.18)`;
-  ctx.globalCompositeOperation = 'multiply';
-  ctx.drawImage(pixelBuffer, -preset.rgbShift * 0.15, 0, ctx.canvas.width, ctx.canvas.height);
+  if (motion > 0.2) {
+    const tear = Math.sin(timeMs * 0.008) * preset.rgbShift * motion * intensity;
+    drawFilteredVideoClip(ctx, pixelBuffer, sample, points, preset, {
+      mode: preset.filterMode,
+      alpha: alpha * clamp(motion * 0.22, 0, 0.24),
+      intensity,
+      motion,
+      rgbBoost: 0.75,
+    });
 
-  ctx.globalCompositeOperation = 'screen';
-  ctx.globalAlpha = alpha * 0.46;
-  ctx.fillStyle = preset.xerox;
-  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-
-  drawPanelScratches(ctx, panel, preset.ink, timeMs, 8 + intensity * 6, alpha * 0.36);
-  ctx.restore();
-}
-
-function drawHalftonePanel(
-  ctx: CanvasRenderingContext2D,
-  sample: VideoSample,
-  panel: Point[],
-  preset: VisualPreset,
-  timeMs: number,
-  intensity: number,
-  alpha: number,
-) {
-  const bounds = getBounds(panel);
-  const gap = Math.floor(clamp(Math.min(ctx.canvas.width, ctx.canvas.height) * 0.018, 10, 16));
-  const seed = Math.floor(timeMs / 220);
-
-  ctx.save();
-  clipPolygon(ctx, panel);
-  ctx.globalAlpha = alpha;
-  ctx.fillStyle = withAlpha(preset.paper, 0.5);
-  ctx.fillRect(bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
-  ctx.globalCompositeOperation = 'multiply';
-  ctx.fillStyle = preset.halftone;
-
-  for (let y = bounds.minY; y <= bounds.maxY; y += gap) {
-    const rowShift = Math.floor(y / gap) % 2 ? gap * 0.5 : 0;
-    for (let x = bounds.minX + rowShift; x <= bounds.maxX; x += gap) {
-      const brightness = sampleBrightness(sample, x, y, ctx.canvas.width, ctx.canvas.height);
-      const wobble = seededNoise(seed + Math.floor(x * 0.05), Math.floor(y * 0.05));
-      const radius = clamp((1 - brightness) * gap * (0.58 + intensity * 0.12) + wobble * 1.3, 1.2, gap * 0.52);
-      if (radius < 1.6) continue;
-      ctx.globalAlpha = alpha * clamp(0.22 + (1 - brightness) * 0.68, 0.18, 0.84);
-      ctx.beginPath();
-      ctx.arc(x, y, radius, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    ctx.save();
+    clipPolygon(ctx, points);
+    ctx.globalCompositeOperation = 'screen';
+    ctx.globalAlpha = alpha * clamp(motion * 0.12, 0, 0.16);
+    ctx.imageSmoothingEnabled = false;
+    ctx.filter = 'contrast(1.8) saturate(1.7)';
+    ctx.drawImage(pixelBuffer, tear, -tear * 0.25, ctx.canvas.width, ctx.canvas.height);
+    ctx.restore();
   }
-
-  ctx.restore();
 }
 
-function drawAcidPanel(
+export function drawFilteredVideoClip(
   ctx: CanvasRenderingContext2D,
   pixelBuffer: HTMLCanvasElement,
-  panel: Point[],
+  sample: SourceSample | null,
+  points: Point[],
   preset: VisualPreset,
-  timeMs: number,
-  intensity: number,
-  motion: number,
-  alpha: number,
+  options: FilterOptions,
 ) {
-  const tear = preset.rgbTear * preset.rgbShift * (0.35 + motion * 0.65) * intensity;
+  if (!points.length || !pixelBuffer.width || !pixelBuffer.height) return;
+
+  const mapped = getMappedVideoCanvas(pixelBuffer, sample, preset, options.mode, options.invert ?? false);
+  const rgbShift = preset.rgbShift * (options.rgbBoost ?? 0.25) * options.intensity * (0.6 + options.motion * 0.8);
 
   ctx.save();
-  clipPolygon(ctx, panel);
+  clipPolygon(ctx, points);
   ctx.imageSmoothingEnabled = false;
-  ctx.filter = `contrast(${1.5 + intensity * 0.28}) saturate(1.35) brightness(1.05)`;
-  ctx.globalAlpha = alpha * 0.48;
-  ctx.globalCompositeOperation = 'multiply';
-  ctx.drawImage(pixelBuffer, tear, Math.sin(timeMs * 0.005) * 2, ctx.canvas.width, ctx.canvas.height);
-
-  ctx.globalCompositeOperation = 'screen';
-  ctx.globalAlpha = alpha * 0.5;
-  ctx.fillStyle = preset.acid;
-  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-
-  ctx.globalCompositeOperation = 'multiply';
-  ctx.globalAlpha = alpha * 0.34;
-  ctx.fillStyle = preset.halftone;
-  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-  ctx.restore();
-}
-
-function drawScannerPanel(
-  ctx: CanvasRenderingContext2D,
-  pixelBuffer: HTMLCanvasElement,
-  panel: Point[],
-  preset: VisualPreset,
-  timeMs: number,
-  intensity: number,
-  alpha: number,
-) {
-  ctx.save();
-  clipPolygon(ctx, panel);
-  ctx.imageSmoothingEnabled = false;
-  ctx.filter = `grayscale(1) contrast(${1.8 + intensity * 0.28}) brightness(1.12)`;
-  ctx.globalAlpha = alpha * 0.5;
-  ctx.globalCompositeOperation = 'multiply';
-  ctx.drawImage(pixelBuffer, 0, 0, ctx.canvas.width, ctx.canvas.height);
-
+  ctx.globalAlpha = options.alpha;
   ctx.globalCompositeOperation = 'source-over';
-  ctx.globalAlpha = alpha * 0.2;
-  ctx.fillStyle = preset.ink;
-  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  ctx.filter = getCanvasFilter(options.mode, preset, options.intensity, options.invert ?? false);
+  ctx.drawImage(mapped, 0, 0, ctx.canvas.width, ctx.canvas.height);
 
-  drawDropouts(ctx, panel, preset.paper, timeMs, 7 + intensity * 5, alpha * 0.72);
+  if (rgbShift > 1) {
+    ctx.globalCompositeOperation = 'screen';
+    ctx.globalAlpha = options.alpha * 0.18;
+    ctx.filter = 'contrast(1.45) saturate(1.6)';
+    ctx.drawImage(mapped, -rgbShift, rgbShift * 0.18, ctx.canvas.width, ctx.canvas.height);
+    ctx.globalAlpha = options.alpha * 0.1;
+    ctx.drawImage(mapped, rgbShift * 0.72, -rgbShift * 0.12, ctx.canvas.width, ctx.canvas.height);
+  }
+
   ctx.restore();
 }
 
-function drawPaperGrain(
+function drawVideoTexture(
   ctx: CanvasRenderingContext2D,
   points: Point[],
   preset: VisualPreset,
@@ -262,42 +152,19 @@ function drawPaperGrain(
   intensity: number,
   alpha: number,
 ) {
-  const bounds = getBounds(points);
-  const count = Math.floor(clamp(18 + preset.grain * 22 + intensity * 8, 16, 54));
-  const seed = Math.floor(timeMs / 180) + Math.round(bounds.minX * 0.13 + bounds.minY * 0.31);
-
-  ctx.save();
-  clipPolygon(ctx, points);
-  ctx.globalCompositeOperation = 'multiply';
-
-  for (let index = 0; index < count; index += 1) {
-    const x = bounds.minX + seededNoise(seed, index) * Math.max(1, bounds.maxX - bounds.minX);
-    const y = bounds.minY + seededNoise(seed + 41, index) * Math.max(1, bounds.maxY - bounds.minY);
-    const width = 1 + seededNoise(seed + 83, index) * 9;
-    const height = seededNoise(seed + 127, index) > 0.72 ? 2 : 1;
-    ctx.globalAlpha = alpha * preset.grain * (0.08 + seededNoise(seed + 167, index) * 0.22);
-    ctx.fillStyle = seededNoise(seed + 211, index) > 0.7 ? preset.halftone : preset.ink;
-    ctx.fillRect(x, y, width, height);
-  }
-
-  ctx.restore();
+  drawScanlines(ctx, points, preset.scanlines, alpha);
+  drawCompressionBands(ctx, points, preset, timeMs, intensity, alpha);
 }
 
-function drawSheetScanlines(
-  ctx: CanvasRenderingContext2D,
-  points: Point[],
-  preset: VisualPreset,
-  intensity: number,
-  alpha: number,
-) {
-  if (preset.scanlines <= 0) return;
+function drawScanlines(ctx: CanvasRenderingContext2D, points: Point[], amount: number, alpha: number) {
+  if (amount <= 0) return;
 
-  const step = Math.floor(clamp(8 - intensity, 5, 8));
+  const step = Math.floor(clamp(7 - amount * 2, 4, 7));
   ctx.save();
   clipPolygon(ctx, points);
   ctx.globalCompositeOperation = 'multiply';
-  ctx.globalAlpha = alpha * preset.scanlines * 0.1;
-  ctx.fillStyle = preset.ink;
+  ctx.globalAlpha = alpha * amount * 0.14;
+  ctx.fillStyle = '#000';
 
   for (let y = 0; y < ctx.canvas.height; y += step) {
     ctx.fillRect(0, y, ctx.canvas.width, 1);
@@ -306,14 +173,43 @@ function drawSheetScanlines(
   ctx.restore();
 }
 
+function drawCompressionBands(
+  ctx: CanvasRenderingContext2D,
+  points: Point[],
+  preset: VisualPreset,
+  timeMs: number,
+  intensity: number,
+  alpha: number,
+) {
+  if (preset.noise <= 0) return;
+
+  const rows = Math.floor(clamp(2 + preset.noise * 5 + intensity, 2, 8));
+  const seed = Math.floor(timeMs / 130);
+
+  ctx.save();
+  clipPolygon(ctx, points);
+  ctx.globalCompositeOperation = 'screen';
+
+  for (let index = 0; index < rows; index += 1) {
+    const y = seededNoise(seed, index) * ctx.canvas.height;
+    const height = 1 + seededNoise(seed + 17, index) * 3;
+    ctx.globalAlpha = alpha * preset.noise * (0.025 + seededNoise(seed + 31, index) * 0.055);
+    ctx.fillStyle = index % 2 ? preset.accent : preset.secondary;
+    ctx.fillRect(0, y, ctx.canvas.width, height);
+  }
+
+  ctx.restore();
+}
+
 function drawFoldLines(ctx: CanvasRenderingContext2D, prism: PrismFrame, preset: VisualPreset, alpha: number, intensity: number) {
   ctx.save();
-  ctx.lineWidth = 1 + intensity * 0.35;
-  ctx.setLineDash([7, 5]);
+  ctx.setLineDash([9, 6]);
+  ctx.lineWidth = 1 + intensity * 0.28;
+  ctx.globalCompositeOperation = 'source-over';
 
   prism.foldLines.slice(0, 9).forEach(([a, b], index) => {
-    ctx.globalAlpha = alpha * (index % 2 ? 0.52 : 0.34);
-    ctx.strokeStyle = index % 2 ? preset.ink : preset.halftone;
+    ctx.globalAlpha = alpha * (index % 2 ? 0.42 : 0.24);
+    ctx.strokeStyle = index % 2 ? preset.accent : '#ffffff';
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
@@ -323,28 +219,34 @@ function drawFoldLines(ctx: CanvasRenderingContext2D, prism: PrismFrame, preset:
   ctx.restore();
 }
 
-function drawSharpFrame(ctx: CanvasRenderingContext2D, prism: PrismFrame, preset: VisualPreset, alpha: number, intensity: number) {
+function drawCleanPrismEdges(ctx: CanvasRenderingContext2D, prism: PrismFrame, preset: VisualPreset, alpha: number, intensity: number) {
   ctx.save();
   ctx.setLineDash([]);
   ctx.globalAlpha = alpha;
+  ctx.globalCompositeOperation = 'source-over';
+
   ctx.lineWidth = 2;
-  ctx.strokeStyle = preset.ink;
+  ctx.strokeStyle = '#f7f7f7';
   strokePolygon(ctx, prism.points);
 
-  ctx.globalAlpha = alpha * 0.85;
   ctx.lineWidth = 1;
-  ctx.strokeStyle = preset.paper;
+  ctx.strokeStyle = preset.accent;
   ctx.save();
   ctx.translate(2, -2);
   strokePolygon(ctx, prism.points);
   ctx.restore();
 
-  ctx.globalCompositeOperation = 'source-over';
+  ctx.strokeStyle = preset.secondary;
+  ctx.save();
+  ctx.translate(-2, 2);
+  strokePolygon(ctx, prism.points);
+  ctx.restore();
+
   prism.anchors.forEach((anchor, index) => {
-    const size = 5 + intensity * 0.8;
-    ctx.fillStyle = index % 2 ? preset.halftone : preset.accent;
-    ctx.strokeStyle = preset.ink;
-    ctx.lineWidth = 1.4;
+    const size = 4.5 + intensity * 0.65;
+    ctx.fillStyle = index % 2 ? preset.secondary : preset.accent;
+    ctx.strokeStyle = '#050505';
+    ctx.lineWidth = 1;
     ctx.fillRect(anchor.x - size * 0.5, anchor.y - size * 0.5, size, size);
     ctx.strokeRect(anchor.x - size * 0.5, anchor.y - size * 0.5, size, size);
   });
@@ -352,16 +254,18 @@ function drawSharpFrame(ctx: CanvasRenderingContext2D, prism: PrismFrame, preset
   ctx.restore();
 }
 
-function buildTrianglePanels(points: Point[], center: Point) {
-  return points.map((point, index) => [center, point, points[(index + 1) % points.length]]);
+function getPanelMode(defaultMode: FilterMode, index: number): FilterMode {
+  const start = PANEL_SEQUENCE.indexOf(defaultMode);
+  const offset = start >= 0 ? start : 0;
+  return PANEL_SEQUENCE[(offset + index + 1) % PANEL_SEQUENCE.length];
 }
 
-function getVideoSample(pixelBuffer: HTMLCanvasElement): VideoSample {
-  const context = pixelBuffer.getContext('2d');
-  if (!context || !pixelBuffer.width || !pixelBuffer.height) return null;
+function readSourceSample(pixelBuffer: HTMLCanvasElement): SourceSample | null {
+  const sourceCtx = pixelBuffer.getContext('2d', { willReadFrequently: true });
+  if (!sourceCtx || !pixelBuffer.width || !pixelBuffer.height) return null;
 
   try {
-    const image = context.getImageData(0, 0, pixelBuffer.width, pixelBuffer.height);
+    const image = sourceCtx.getImageData(0, 0, pixelBuffer.width, pixelBuffer.height);
     return {
       data: image.data,
       width: image.width,
@@ -372,91 +276,86 @@ function getVideoSample(pixelBuffer: HTMLCanvasElement): VideoSample {
   }
 }
 
-function sampleBrightness(sample: VideoSample, x: number, y: number, canvasWidth: number, canvasHeight: number) {
+function getMappedVideoCanvas(
+  pixelBuffer: HTMLCanvasElement,
+  sample: SourceSample | null,
+  preset: VisualPreset,
+  mode: FilterMode,
+  invert: boolean,
+) {
+  const key = `${preset.id}:${mode}:${invert ? 'invert' : 'normal'}`;
+  const canvas = getReusableCanvas(key, pixelBuffer.width, pixelBuffer.height);
+  const targetCtx = canvas.getContext('2d');
+  if (!targetCtx) return pixelBuffer;
+
   if (!sample) {
-    return 0.45 + seededNoise(Math.floor(x * 0.13), Math.floor(y * 0.17)) * 0.34;
+    targetCtx.save();
+    targetCtx.clearRect(0, 0, canvas.width, canvas.height);
+    targetCtx.filter = getCanvasFilter(mode, preset, 1, invert);
+    targetCtx.drawImage(pixelBuffer, 0, 0);
+    targetCtx.restore();
+    return canvas;
   }
 
-  const sx = clamp(Math.floor((x / Math.max(1, canvasWidth)) * sample.width), 0, sample.width - 1);
-  const sy = clamp(Math.floor((y / Math.max(1, canvasHeight)) * sample.height), 0, sample.height - 1);
-  const index = (sy * sample.width + sx) * 4;
-  const r = sample.data[index] ?? 0;
-  const g = sample.data[index + 1] ?? 0;
-  const b = sample.data[index + 2] ?? 0;
-  return (r * 0.299 + g * 0.587 + b * 0.114) / 255;
-}
+  const output = targetCtx.createImageData(sample.width, sample.height);
+  const palette = getPaletteForMode(preset, mode);
+  const levels = palette.length - 1;
 
-function drawPanelScratches(
-  ctx: CanvasRenderingContext2D,
-  panel: Point[],
-  color: string,
-  timeMs: number,
-  count: number,
-  alpha: number,
-) {
-  const bounds = getBounds(panel);
-  const seed = Math.floor(timeMs / 240) + Math.round(bounds.maxY);
+  for (let index = 0; index < sample.data.length; index += 4) {
+    const r = sample.data[index] ?? 0;
+    const g = sample.data[index + 1] ?? 0;
+    const b = sample.data[index + 2] ?? 0;
+    let brightness = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
+    brightness = applyModeCurve(brightness, mode, preset.contrast);
+    if (invert) brightness = 1 - brightness;
 
-  ctx.save();
-  ctx.globalCompositeOperation = 'multiply';
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1;
+    const band = clamp(Math.floor(brightness * (levels + 0.999)), 0, levels);
+    const color = hexToRgb(palette[band]);
+    const sourceWeight = mode === 'compressed' ? 0.24 : mode === 'xerox' ? 0.1 : 0.16;
 
-  for (let index = 0; index < count; index += 1) {
-    const y = bounds.minY + seededNoise(seed, index) * Math.max(1, bounds.maxY - bounds.minY);
-    const x = bounds.minX + seededNoise(seed + 23, index) * Math.max(1, bounds.maxX - bounds.minX) * 0.55;
-    const length = 18 + seededNoise(seed + 53, index) * 86;
-    ctx.globalAlpha = alpha * (0.35 + seededNoise(seed + 79, index) * 0.65);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.lineTo(x + length, y + seededNoise(seed + 101, index) * 2 - 1);
-    ctx.stroke();
+    output.data[index] = clamp(color.r * (1 - sourceWeight) + r * sourceWeight, 0, 255);
+    output.data[index + 1] = clamp(color.g * (1 - sourceWeight) + g * sourceWeight, 0, 255);
+    output.data[index + 2] = clamp(color.b * (1 - sourceWeight) + b * sourceWeight, 0, 255);
+    output.data[index + 3] = 255;
   }
 
-  ctx.restore();
+  targetCtx.putImageData(output, 0, 0);
+  return canvas;
 }
 
-function drawDropouts(
-  ctx: CanvasRenderingContext2D,
-  panel: Point[],
-  color: string,
-  timeMs: number,
-  count: number,
-  alpha: number,
-) {
-  const bounds = getBounds(panel);
-  const seed = Math.floor(timeMs / 260) + Math.round(bounds.minX);
-
-  ctx.save();
-  ctx.globalCompositeOperation = 'screen';
-  ctx.fillStyle = color;
-
-  for (let index = 0; index < count; index += 1) {
-    const x = bounds.minX + seededNoise(seed, index) * Math.max(1, bounds.maxX - bounds.minX);
-    const y = bounds.minY + seededNoise(seed + 29, index) * Math.max(1, bounds.maxY - bounds.minY);
-    const width = 6 + seededNoise(seed + 59, index) * 34;
-    ctx.globalAlpha = alpha * (0.25 + seededNoise(seed + 89, index) * 0.5);
-    ctx.fillRect(x, y, width, 1 + seededNoise(seed + 113, index) * 3);
-  }
-
-  ctx.restore();
+function getReusableCanvas(key: string, width: number, height: number) {
+  const canvas = mappedCanvases.get(key) ?? document.createElement('canvas');
+  ensureCanvasSize(canvas, width, height);
+  mappedCanvases.set(key, canvas);
+  return canvas;
 }
 
-function getBounds(points: Point[]): Bounds {
-  return points.reduce(
-    (bounds, point) => ({
-      minX: Math.min(bounds.minX, point.x),
-      minY: Math.min(bounds.minY, point.y),
-      maxX: Math.max(bounds.maxX, point.x),
-      maxY: Math.max(bounds.maxY, point.y),
-    }),
-    {
-      minX: Number.POSITIVE_INFINITY,
-      minY: Number.POSITIVE_INFINITY,
-      maxX: Number.NEGATIVE_INFINITY,
-      maxY: Number.NEGATIVE_INFINITY,
-    },
-  );
+function getPaletteForMode(preset: VisualPreset, mode: FilterMode) {
+  if (mode === preset.filterMode) return preset.palette;
+  if (mode === 'night') return ['#000400', '#003414', '#008c32', '#65ff3e', '#eaff85'];
+  if (mode === 'xerox') return ['#050505', '#282828', '#d9d2c0', '#ffffff', preset.secondary];
+  if (mode === 'compressed') return ['#050816', '#1d2b54', '#4078a8', '#d6fff3', preset.secondary];
+  if (mode === 'surveillance') return ['#000306', '#003953', '#00a6a6', '#c5ff00', '#ff3d00', '#ffffff'];
+  return ['#020214', '#15147a', '#6f18bd', '#e21d26', '#ff7a00', '#ffe600', '#ffffff'];
+}
+
+function applyModeCurve(value: number, mode: FilterMode, contrast: number) {
+  const centered = (value - 0.5) * contrast + 0.5;
+  const curved = clamp(centered, 0, 1);
+  if (mode === 'night') return Math.pow(curved, 0.72);
+  if (mode === 'xerox') return curved > 0.56 ? 1 : curved > 0.36 ? 0.55 : 0;
+  if (mode === 'compressed') return Math.floor(curved * 5) / 5;
+  if (mode === 'surveillance') return Math.pow(curved, 0.86);
+  return Math.pow(curved, 0.78);
+}
+
+function getCanvasFilter(mode: FilterMode, preset: VisualPreset, intensity: number, invert: boolean) {
+  const invertFilter = invert ? ' invert(1)' : '';
+  if (mode === 'night') return `contrast(${1.12 + intensity * 0.14}) saturate(1.2) brightness(0.92)${invertFilter}`;
+  if (mode === 'xerox') return `contrast(${1.38 + intensity * 0.2}) saturate(0.72) brightness(1.02)${invertFilter}`;
+  if (mode === 'compressed') return `contrast(${1.08 + intensity * 0.12}) saturate(1.28) brightness(0.98)${invertFilter}`;
+  if (mode === 'surveillance') return `contrast(${1.28 + intensity * 0.2}) saturate(1.45) brightness(0.94)${invertFilter}`;
+  return `contrast(${1.22 + preset.contrast * 0.12 + intensity * 0.16}) saturate(1.45) brightness(0.96)${invertFilter}`;
 }
 
 function strokePolygon(ctx: CanvasRenderingContext2D, points: Point[]) {
@@ -467,13 +366,15 @@ function strokePolygon(ctx: CanvasRenderingContext2D, points: Point[]) {
   ctx.stroke();
 }
 
-function withAlpha(hex: string, alpha: number) {
+function hexToRgb(hex: string) {
   const normalized = hex.replace('#', '');
-  if (normalized.length !== 6) return hex;
-  const r = Number.parseInt(normalized.slice(0, 2), 16);
-  const g = Number.parseInt(normalized.slice(2, 4), 16);
-  const b = Number.parseInt(normalized.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  const fallback = { r: 255, g: 255, b: 255 };
+  if (normalized.length !== 6) return fallback;
+  return {
+    r: Number.parseInt(normalized.slice(0, 2), 16),
+    g: Number.parseInt(normalized.slice(2, 4), 16),
+    b: Number.parseInt(normalized.slice(4, 6), 16),
+  };
 }
 
 function seededNoise(seed: number, index: number) {
