@@ -1,6 +1,7 @@
 import type { PrismFrame } from '../vision/prismEngine';
-import { clipPolygon } from '../utils/canvas';
+import { clipPolygon, drawCanvasRegion, getPolygonBounds } from '../utils/canvas';
 import type { VisualPreset } from './presets';
+import type { RenderQuality } from './renderQuality';
 
 export function drawCrossingEffect(
   ctx: CanvasRenderingContext2D,
@@ -9,12 +10,14 @@ export function drawCrossingEffect(
   preset: VisualPreset,
   timeMs: number,
   intensity: number,
+  quality: RenderQuality,
 ) {
   if (!prism.crossing || prism.decay <= 0 || prism.points.length < 3) return;
 
   const tear = preset.rgbShift * (1.05 + intensity * 0.42);
   const jitter = Math.sin(timeMs * 0.006) * tear * 0.35;
   const isDeadChannel = preset.filterMode === 'dead-channel';
+  const bounds = getPolygonBounds(prism.points, ctx.canvas.width, ctx.canvas.height, tear + 12);
 
   ctx.save();
   clipPolygon(ctx, prism.points);
@@ -23,24 +26,24 @@ export function drawCrossingEffect(
   ctx.globalAlpha = prism.decay * getCrossingAlpha(preset.filterMode);
   ctx.globalCompositeOperation = 'source-over';
   ctx.filter = getCrossingFilter(preset, intensity);
-  ctx.drawImage(pixelBuffer, -tear + jitter, tear * 0.18, ctx.canvas.width, ctx.canvas.height);
+  drawCanvasRegion(ctx, pixelBuffer, bounds, -tear + jitter, tear * 0.18);
 
   ctx.globalCompositeOperation = 'screen';
-  ctx.globalAlpha = prism.decay * getGhostAlpha(preset.filterMode);
+  ctx.globalAlpha = prism.decay * getGhostAlpha(preset.filterMode) * quality.ghostAlphaMultiplier;
   ctx.filter = getCrossingGhostFilter(preset, intensity);
-  ctx.drawImage(pixelBuffer, tear * 0.72, -tear * 0.22, ctx.canvas.width, ctx.canvas.height);
+  drawCanvasRegion(ctx, pixelBuffer, bounds, tear * 0.72, -tear * 0.22);
 
-  const step = Math.max(5, Math.floor(8 - preset.scanlines * 2));
+  const step = Math.max(5, Math.floor((8 - preset.scanlines * 2) * quality.scanlineStepMultiplier));
   ctx.globalCompositeOperation = 'multiply';
-  ctx.globalAlpha = prism.decay * (0.1 + preset.scanlines * 0.1);
+  ctx.globalAlpha = prism.decay * (0.1 + preset.scanlines * 0.1) * quality.scanlineAmountMultiplier;
   ctx.fillStyle = '#000';
 
-  for (let y = 0; y <= ctx.canvas.height; y += step) {
-    ctx.fillRect(0, y, ctx.canvas.width, 1);
+  for (let y = bounds.y; y <= bounds.y + bounds.height; y += step) {
+    ctx.fillRect(bounds.x, y, bounds.width, 1);
   }
 
   if (isDeadChannel) {
-    drawDeadSignalFailure(ctx, prism.decay, timeMs, intensity);
+    drawDeadSignalFailure(ctx, prism.decay, timeMs, intensity, quality, bounds);
   }
 
   if (preset.filterMode === 'ai-tracker') {
@@ -79,17 +82,24 @@ function getGhostAlpha(mode: VisualPreset['filterMode']) {
   return 0.18;
 }
 
-function drawDeadSignalFailure(ctx: CanvasRenderingContext2D, decay: number, timeMs: number, intensity: number) {
+function drawDeadSignalFailure(
+  ctx: CanvasRenderingContext2D,
+  decay: number,
+  timeMs: number,
+  intensity: number,
+  quality: RenderQuality,
+  bounds: { x: number; y: number; width: number; height: number },
+) {
   const seed = Math.floor(timeMs / 70);
-  const rows = Math.floor(4 + intensity * 5);
+  const rows = Math.floor((4 + intensity * 5) * quality.effectDetailMultiplier);
 
   ctx.globalCompositeOperation = 'source-over';
   for (let index = 0; index < rows; index += 1) {
-    const y = seededNoise(seed, index) * ctx.canvas.height;
+    const y = bounds.y + seededNoise(seed, index) * bounds.height;
     const height = 2 + seededNoise(seed + 41, index) * 12;
     ctx.globalAlpha = decay * (0.08 + seededNoise(seed + 17, index) * 0.13);
     ctx.fillStyle = index % 2 ? '#fff' : '#050505';
-    ctx.fillRect(0, y, ctx.canvas.width, height);
+    ctx.fillRect(bounds.x, y, bounds.width, height);
   }
 }
 

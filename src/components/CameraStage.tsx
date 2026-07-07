@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { PRESETS, getPreset, type PresetId, type VisualPreset } from '../effects/presets';
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
+import { PRESETS, getPreset, type EffectMode, type PresetId, type VisualPreset } from '../effects/presets';
 import { drawPrismSheet } from '../effects/prismSheet';
+import { BOOST_RENDER_QUALITY, FULL_RENDER_QUALITY, type RenderQuality, type RenderQualityLevel } from '../effects/renderQuality';
 import { captureFeedback, drawFeedbackTrails } from '../effects/trails';
 import { useCanvasRecorder } from '../recording/useCanvasRecorder';
 import {
@@ -20,10 +21,15 @@ import { createHandTracker, HAND_LANDMARK, mapHandResultsToCanvas, type HandTrac
 import { createPrismEngine, type PrismFrame } from '../vision/prismEngine';
 
 type CameraSettings = {
-  presetId: PresetId;
+  effectMode: EffectMode;
   debug: boolean;
   sensitivity: number;
   intensity: number;
+};
+
+type ShapePresetAssignment = {
+  shapeId: number;
+  presetId: PresetId;
 };
 
 const HAND_CONNECTIONS = [
@@ -56,7 +62,7 @@ const EMPTY_HUD: TechnicalHudSnapshot = {
   sheetState: 'INACTIVE',
   crossing: false,
   fps: 0,
-  preset: 'Thermal Vision',
+  preset: 'Random per shape',
   leftFingers: [],
   rightFingers: [],
   singleFingers: [],
@@ -72,14 +78,17 @@ export function CameraStage() {
   const buffersRef = useRef<CanvasBuffers | null>(null);
   const prismEngineRef = useRef(createPrismEngine());
   const lastVideoTimeRef = useRef(-1);
+  const lastDetectionAtRef = useRef(0);
   const lastDetectedHandsRef = useRef<TrackedHand[]>([]);
   const lastHudUpdateRef = useRef(0);
   const lastHudSnapshotRef = useRef<TechnicalHudSnapshot>(EMPTY_HUD);
+  const qualityRef = useRef<RenderQuality>(FULL_RENDER_QUALITY);
+  const shapePresetRef = useRef<ShapePresetAssignment>({ shapeId: 0, presetId: 'thermal-vision' });
   const feedbackFrameRef = useRef(0);
   const startedRef = useRef(false);
   const modelReadyRef = useRef(false);
   const settingsRef = useRef<CameraSettings>({
-    presetId: 'thermal-vision',
+    effectMode: 'random',
     debug: true,
     sensitivity: 1,
     intensity: 1,
@@ -89,7 +98,8 @@ export function CameraStage() {
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState('BOOT WAIT: camera module idle');
   const [error, setError] = useState('');
-  const [presetId, setPresetId] = useState<PresetId>('thermal-vision');
+  const [effectMode, setEffectMode] = useState<EffectMode>('random');
+  const [renderQualityLevel, setRenderQualityLevel] = useState<RenderQualityLevel>('full');
   const [debug, setDebug] = useState(true);
   const [sensitivity, setSensitivity] = useState(1);
   const [intensity, setIntensity] = useState(1);
@@ -97,7 +107,7 @@ export function CameraStage() {
   const recorder = useCanvasRecorder(canvasRef);
 
   settingsRef.current = {
-    presetId,
+    effectMode,
     debug,
     sensitivity,
     intensity,
@@ -120,9 +130,9 @@ export function CameraStage() {
       return;
     }
 
-    const { width, height } = resizeCanvasToDisplaySize(canvas);
+    const currentQuality = qualityRef.current;
+    const { width, height } = resizeCanvasToDisplaySize(canvas, currentQuality.canvasMaxDpr);
     const settings = settingsRef.current;
-    const preset = getPreset(settings.presetId);
 
     ctx.save();
     ctx.fillStyle = '#030306';
@@ -141,24 +151,16 @@ export function CameraStage() {
 
     const buffers = buffersRef.current;
     const fit = getVideoCoverFit(video.videoWidth, video.videoHeight, width, height);
-    renderPixelatedVideoBuffer(buffers.pixel, video, width, height, preset.pixelScale);
-
-    ctx.save();
-    ctx.filter = getBackgroundFilter(settings.presetId, settings.intensity);
-    drawMirroredVideo(ctx, video, fit);
-    ctx.restore();
-
-    ctx.fillStyle = preset.backgroundTint;
-    ctx.fillRect(0, 0, width, height);
-    const drawTrails = shouldDrawFeedbackTrails(preset, settings.intensity);
-    if (drawTrails) {
-      drawFeedbackTrails(ctx, buffers.feedback, preset, settings.intensity);
-    }
 
     let detectedHands = lastDetectedHandsRef.current;
     const tracker = trackerRef.current;
-    if (tracker && video.currentTime !== lastVideoTimeRef.current) {
+    if (
+      tracker &&
+      video.currentTime !== lastVideoTimeRef.current &&
+      now - lastDetectionAtRef.current >= currentQuality.detectionIntervalMs
+    ) {
       lastVideoTimeRef.current = video.currentTime;
+      lastDetectionAtRef.current = now;
       try {
         detectedHands = mapHandResultsToCanvas(tracker.detect(video, now), video, fit);
         lastDetectedHandsRef.current = detectedHands;
@@ -173,12 +175,47 @@ export function CameraStage() {
       height,
     });
 
-    drawPrismSheet(ctx, buffers.pixel, prismFrame, preset, now, settings.intensity);
+    const nextQuality = getAdaptiveRenderQuality(prismFrame, currentQuality);
+    if (nextQuality.level !== currentQuality.level) {
+      qualityRef.current = nextQuality;
+      setRenderQualityLevel(nextQuality.level);
+    } else {
+      qualityRef.current = nextQuality;
+    }
+
+    const preset = getPreset(resolvePresetId(settings.effectMode, prismFrame, shapePresetRef));
+    renderPixelatedVideoBuffer(
+      buffers.pixel,
+      video,
+      width,
+      height,
+      preset.pixelScale * nextQuality.pixelScaleMultiplier,
+    );
+
+    ctx.save();
+    ctx.filter = getBackgroundFilter(preset.id, settings.intensity);
+    drawMirroredVideo(ctx, video, fit);
+    ctx.restore();
+
+    ctx.fillStyle = preset.backgroundTint;
+    ctx.fillRect(0, 0, width, height);
+    const drawTrails = shouldDrawFeedbackTrails(preset, settings.intensity, nextQuality);
+    if (drawTrails) {
+      drawFeedbackTrails(ctx, buffers.feedback, preset, settings.intensity);
+    }
+
+    drawPrismSheet(ctx, buffers.pixel, prismFrame, preset, now, settings.intensity, nextQuality);
     if (settings.intensity > 1.25 && Math.floor(now / 90) % 2 === 0) {
-      drawGlitchLineNoise(ctx, width, height, preset.noise * settings.intensity * 0.35, now * 0.02);
+      drawGlitchLineNoise(
+        ctx,
+        width,
+        height,
+        preset.noise * settings.intensity * 0.35 * nextQuality.glitchNoiseMultiplier,
+        now * 0.02,
+      );
     }
     if (settings.debug) {
-      drawAnchorLabels(ctx, prismFrame.anchors, preset, width);
+      drawAnchorLabels(ctx, prismFrame.anchors.slice(0, nextQuality.maxAnchorMarkers), preset, width);
     }
 
     if (preset.timestamp) {
@@ -186,13 +223,13 @@ export function CameraStage() {
     }
 
     if (settings.debug) {
-      drawDebugLandmarks(ctx, detectedHands, prismFrame, preset.accent);
+      drawDebugLandmarks(ctx, detectedHands, prismFrame, preset.accent, nextQuality);
     }
 
-    drawCornerHud(ctx, width, height, prismFrame, preset.label);
+    drawCornerHud(ctx, width, height, prismFrame, preset.label, nextQuality);
     if (drawTrails) {
       feedbackFrameRef.current += 1;
-      if (feedbackFrameRef.current % 4 === 0) {
+      if (feedbackFrameRef.current % nextQuality.feedbackCaptureEvery === 0) {
         captureFeedback(buffers.feedback, canvas);
       }
     }
@@ -200,7 +237,7 @@ export function CameraStage() {
 
     if (now - lastHudUpdateRef.current > 500) {
       lastHudUpdateRef.current = now;
-      const nextSnapshot = toHudSnapshot(prismFrame, preset);
+      const nextSnapshot = toHudSnapshot(prismFrame, preset, nextQuality);
       if (!areHudSnapshotsEqual(lastHudSnapshotRef.current, nextSnapshot)) {
         lastHudSnapshotRef.current = nextSnapshot;
         setHudSnapshot(nextSnapshot);
@@ -251,7 +288,11 @@ export function CameraStage() {
       prismEngineRef.current.reset();
       lastDetectedHandsRef.current = [];
       lastVideoTimeRef.current = -1;
+      lastDetectionAtRef.current = 0;
+      shapePresetRef.current = { shapeId: 0, presetId: 'thermal-vision' };
+      qualityRef.current = FULL_RENDER_QUALITY;
       feedbackFrameRef.current = 0;
+      setRenderQualityLevel('full');
       setIsStarted(true);
       setStatus('TRACE ONLINE: extend fingers to pin the video sheet');
 
@@ -289,8 +330,13 @@ export function CameraStage() {
 
     prismEngineRef.current.reset();
     lastDetectedHandsRef.current = [];
+    lastVideoTimeRef.current = -1;
+    lastDetectionAtRef.current = 0;
+    shapePresetRef.current = { shapeId: 0, presetId: 'thermal-vision' };
+    qualityRef.current = FULL_RENDER_QUALITY;
     lastHudSnapshotRef.current = EMPTY_HUD;
     setHudSnapshot(EMPTY_HUD);
+    setRenderQualityLevel('full');
     setIsStarted(false);
     setStatus('TRACE STOPPED: local camera stream closed');
   }, [recorder]);
@@ -478,7 +524,8 @@ export function CameraStage() {
             <div className="control-body">
               <label className="control-field">
                 <span>FILTER MODE</span>
-                <select value={presetId} onChange={(event) => setPresetId(event.target.value as PresetId)}>
+                <select value={effectMode} onChange={(event) => setEffectMode(event.target.value as EffectMode)}>
+                  <option value="random">Random per shape</option>
                   {PRESETS.map((presetOption) => (
                     <option key={presetOption.id} value={presetOption.id}>
                       {presetOption.label}
@@ -486,7 +533,9 @@ export function CameraStage() {
                   ))}
                 </select>
               </label>
-              <p className="control-status">STATUS: VIDEO FILTER</p>
+              <p className="control-status">
+                STATUS: {renderQualityLevel === 'boost' ? 'AUTO BOOST' : effectMode === 'random' ? 'RANDOM ROLL' : 'VIDEO FILTER'}
+              </p>
 
               <label className="control-field slider-field">
                 <span>Sensitivity</span>
@@ -546,6 +595,47 @@ export function CameraStage() {
   );
 }
 
+function resolvePresetId(
+  effectMode: EffectMode,
+  frame: PrismFrame,
+  assignmentRef: MutableRefObject<ShapePresetAssignment>,
+): PresetId {
+  if (effectMode !== 'random') {
+    return effectMode;
+  }
+
+  if (!frame.renderActive || frame.shapeId <= 0) {
+    return assignmentRef.current.presetId;
+  }
+
+  if (assignmentRef.current.shapeId !== frame.shapeId) {
+    assignmentRef.current = {
+      shapeId: frame.shapeId,
+      presetId: pickRandomPresetId(),
+    };
+  }
+
+  return assignmentRef.current.presetId;
+}
+
+function pickRandomPresetId(): PresetId {
+  const index = Math.floor(Math.random() * PRESETS.length);
+  return PRESETS[index]?.id ?? 'thermal-vision';
+}
+
+function getAdaptiveRenderQuality(frame: PrismFrame, current: RenderQuality): RenderQuality {
+  const fpsKnown = frame.fps > 0;
+  const highAnchorLoad = frame.anchors.length >= 7 || frame.foldLines.length > 8;
+  const fpsStruggling = fpsKnown && frame.fps < 24;
+  const recovered = frame.anchors.length <= 5 && frame.foldLines.length <= 6 && (!fpsKnown || frame.fps > 30);
+
+  if (current.level === 'boost') {
+    return recovered ? FULL_RENDER_QUALITY : BOOST_RENDER_QUALITY;
+  }
+
+  return highAnchorLoad || fpsStruggling ? BOOST_RENDER_QUALITY : FULL_RENDER_QUALITY;
+}
+
 function getBackgroundFilter(presetId: PresetId, intensity: number) {
   if (presetId === 'ai-tracker') return `contrast(${1.2 + intensity * 0.14}) saturate(0.58) brightness(0.9)`;
   if (presetId === 'rave-tricolor') return `contrast(${1.22 + intensity * 0.12}) saturate(0.92) brightness(0.9)`;
@@ -554,8 +644,8 @@ function getBackgroundFilter(presetId: PresetId, intensity: number) {
   return `contrast(${1.18 + intensity * 0.14}) saturate(0.88) brightness(0.9)`;
 }
 
-function shouldDrawFeedbackTrails(preset: VisualPreset, intensity: number) {
-  return intensity >= 1.35 && preset.trailAlpha >= 0.12;
+function shouldDrawFeedbackTrails(preset: VisualPreset, intensity: number, quality: RenderQuality) {
+  return quality.level === 'full' && intensity >= 1.35 && preset.trailAlpha >= 0.12;
 }
 
 function padCount(value: number) {
@@ -599,10 +689,31 @@ function drawDebugLandmarks(
   trackedHands: TrackedHand[],
   frame: PrismFrame,
   accent: string,
+  quality: RenderQuality,
 ) {
   ctx.save();
   ctx.lineWidth = 2;
   ctx.font = '12px "Courier New", monospace';
+
+  if (quality.simplifyDebug) {
+    frame.anchors.slice(0, quality.maxAnchorMarkers).forEach((anchor) => {
+      ctx.fillStyle = accent;
+      ctx.beginPath();
+      ctx.arc(anchor.x, anchor.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    frame.foldLines.slice(0, quality.maxFoldLines).forEach(([a, b]) => {
+      ctx.strokeStyle = frame.crossing ? 'rgba(255, 255, 255, 0.7)' : 'rgba(255, 232, 74, 0.36)';
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    });
+
+    ctx.restore();
+    return;
+  }
 
   trackedHands.forEach((hand) => {
     ctx.strokeStyle = 'rgba(54, 245, 199, 0.72)';
@@ -671,9 +782,17 @@ function drawAnchorLabels(
   ctx.restore();
 }
 
-function drawCornerHud(ctx: CanvasRenderingContext2D, width: number, height: number, frame: PrismFrame, presetLabel: string) {
+function drawCornerHud(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  frame: PrismFrame,
+  presetLabel: string,
+  quality: RenderQuality,
+) {
   const pad = clamp(width * 0.022, 16, 34);
-  const text = `${presetLabel} / anchors:${frame.anchors.length} / sheet:${frame.sheetState} / cross:${frame.crossing ? 'yes' : 'no'}`;
+  const boostLabel = quality.level === 'boost' ? ' / q:boost' : '';
+  const text = `${presetLabel} / anchors:${frame.anchors.length} / sheet:${frame.sheetState} / cross:${frame.crossing ? 'yes' : 'no'}${boostLabel}`;
 
   ctx.save();
   ctx.font = `${clamp(width * 0.012, 12, 16)}px "Courier New", monospace`;
@@ -694,7 +813,9 @@ function drawCornerHud(ctx: CanvasRenderingContext2D, width: number, height: num
   ctx.restore();
 }
 
-function toHudSnapshot(frame: PrismFrame, preset: VisualPreset): TechnicalHudSnapshot {
+function toHudSnapshot(frame: PrismFrame, preset: VisualPreset, quality: RenderQuality): TechnicalHudSnapshot {
+  const logs = quality.level === 'boost' ? [...frame.logLines, '> render quality auto_boost'] : frame.logLines;
+
   return {
     hands: frame.hands.length,
     anchors: frame.anchors.length,
@@ -705,7 +826,7 @@ function toHudSnapshot(frame: PrismFrame, preset: VisualPreset): TechnicalHudSna
     leftFingers: getFingersForHand(frame, 'left'),
     rightFingers: getFingersForHand(frame, 'right'),
     singleFingers: getFingersForHand(frame, 'single'),
-    logs: frame.logLines,
+    logs,
   };
 }
 

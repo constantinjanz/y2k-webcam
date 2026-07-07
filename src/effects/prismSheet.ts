@@ -1,14 +1,16 @@
 import type { PrismFrame } from '../vision/prismEngine';
-import { clipPolygon, ensureCanvasSize } from '../utils/canvas';
+import { clipPolygon, drawCanvasRegion, ensureCanvasSize, getPolygonBounds } from '../utils/canvas';
 import { clamp, type Point } from '../utils/math';
 import { drawCrossingEffect } from './crossingEffect';
-import type { FilterMode, VisualPreset } from './presets';
+import type { VisualPreset } from './presets';
+import type { RenderQuality } from './renderQuality';
 
 type RenderOptions = {
   alpha: number;
   intensity: number;
   motion: number;
   timeMs: number;
+  quality: RenderQuality;
 };
 
 type Rgb = {
@@ -22,7 +24,12 @@ type ColorStop = {
   color: Rgb;
 };
 
-const workCanvases = new Map<string, HTMLCanvasElement>();
+type WorkCanvasState = {
+  canvas: HTMLCanvasElement;
+  frameKey: string;
+};
+
+const workCanvases = new Map<string, WorkCanvasState>();
 
 const THERMAL_STOPS: ColorStop[] = [
   { at: 0, color: hexToRgb('#17001f') },
@@ -41,6 +48,7 @@ export function drawPrismSheet(
   preset: VisualPreset,
   timeMs: number,
   intensity: number,
+  quality: RenderQuality,
 ) {
   if (!prism.renderActive || prism.decay <= 0 || prism.points.length < 3) return;
 
@@ -57,15 +65,16 @@ export function drawPrismSheet(
     intensity,
     motion,
     timeMs,
+    quality,
   });
 
-  drawFoldLines(ctx, prism, preset, alpha, intensity);
+  drawFoldLines(ctx, prism, preset, alpha, intensity, quality);
 
   if (prism.crossing) {
-    drawCrossingEffect(ctx, pixelBuffer, prism, preset, timeMs, intensity);
+    drawCrossingEffect(ctx, pixelBuffer, prism, preset, timeMs, intensity, quality);
   }
 
-  drawCleanPrismEdges(ctx, prism, preset, alpha, intensity);
+  drawCleanPrismEdges(ctx, prism, preset, alpha, intensity, quality);
   ctx.restore();
 }
 
@@ -108,7 +117,7 @@ function drawThermalVision(
   preset: VisualPreset,
   options: RenderOptions,
 ) {
-  const mapped = mapVideoToCanvas(pixelBuffer, 'thermal-vision', 280, true, (r, g, b) => {
+  const mapped = mapVideoToCanvas(pixelBuffer, 'thermal-vision', 280, true, options, (r, g, b) => {
     const luma = lumaOf(r, g, b);
     const heat = Math.pow(clamp(luma * 1.08, 0, 1), 0.78);
     const color = sampleGradient(THERMAL_STOPS, heat);
@@ -116,7 +125,7 @@ function drawThermalVision(
   });
 
   drawCanvasClip(ctx, mapped, points, options.alpha, true, `contrast(${1.05 + options.intensity * 0.08}) saturate(1.2)`);
-  drawScanlines(ctx, points, preset.scanlines * 0.45, options.alpha, '#091027');
+  drawScanlines(ctx, points, preset.scanlines * 0.45, options.alpha, '#091027', options.quality);
 }
 
 function drawAiTracker(
@@ -126,6 +135,7 @@ function drawAiTracker(
   preset: VisualPreset,
   options: RenderOptions,
 ) {
+  const bounds = getPolygonBounds(prism.points, ctx.canvas.width, ctx.canvas.height, preset.rgbShift + 10);
   drawCanvasClip(
     ctx,
     pixelBuffer,
@@ -139,15 +149,19 @@ function drawAiTracker(
   clipPolygon(ctx, prism.points);
   ctx.imageSmoothingEnabled = true;
   ctx.globalCompositeOperation = 'screen';
-  ctx.globalAlpha = options.alpha * 0.16;
+  ctx.globalAlpha = options.alpha * 0.16 * options.quality.ghostAlphaMultiplier;
   ctx.filter = 'contrast(1.8) saturate(0.4) brightness(1.18)';
-  ctx.drawImage(pixelBuffer, -2, 0, ctx.canvas.width, ctx.canvas.height);
-  ctx.globalAlpha = options.alpha * 0.11;
-  ctx.drawImage(pixelBuffer, 2, 0, ctx.canvas.width, ctx.canvas.height);
+  drawCanvasRegion(ctx, pixelBuffer, bounds, -2, 0);
+  if (options.quality.ghostPasses > 1) {
+    ctx.globalAlpha = options.alpha * 0.11 * options.quality.ghostAlphaMultiplier;
+    drawCanvasRegion(ctx, pixelBuffer, bounds, 2, 0);
+  }
   ctx.restore();
 
-  drawScanlines(ctx, prism.points, preset.scanlines, options.alpha, '#00f6ff');
-  drawAiTrackerLabels(ctx, prism, preset, options);
+  drawScanlines(ctx, prism.points, preset.scanlines, options.alpha, '#00f6ff', options.quality);
+  if (!options.quality.simplifyDebug) {
+    drawAiTrackerLabels(ctx, prism, preset, options);
+  }
 }
 
 function drawRaveTricolor(
@@ -157,7 +171,7 @@ function drawRaveTricolor(
   preset: VisualPreset,
   options: RenderOptions,
 ) {
-  const mapped = mapVideoToCanvas(pixelBuffer, 'rave-tricolor', 176, false, (r, g, b) => {
+  const mapped = mapVideoToCanvas(pixelBuffer, 'rave-tricolor', 176, false, options, (r, g, b) => {
     const luma = lumaOf(r, g, b);
     if (luma > 0.68) return hexToRgb('#ffffff');
     if (luma > 0.34) return hexToRgb('#ff1bd6');
@@ -165,8 +179,8 @@ function drawRaveTricolor(
   });
 
   drawCanvasClip(ctx, mapped, points, options.alpha, false, `contrast(${1.08 + options.intensity * 0.12}) saturate(1.05)`);
-  drawRgbGhost(ctx, mapped, points, preset.rgbShift * 0.35 * options.intensity, options.alpha * 0.2, false);
-  drawScanlines(ctx, points, preset.scanlines * 0.55, options.alpha, '#175cff');
+  drawRgbGhost(ctx, mapped, points, preset.rgbShift * 0.35 * options.intensity, options.alpha * 0.2, false, options.quality);
+  drawScanlines(ctx, points, preset.scanlines * 0.55, options.alpha, '#175cff', options.quality);
 }
 
 function drawDeadChannel(
@@ -177,7 +191,7 @@ function drawDeadChannel(
   options: RenderOptions,
 ) {
   const seed = Math.floor(options.timeMs / 80);
-  const mapped = mapVideoToCanvas(pixelBuffer, `dead-channel:${seed}`, 92, false, (r, g, b, x, y) => {
+  const mapped = mapVideoToCanvas(pixelBuffer, 'dead-channel', 92, false, options, (r, g, b, x, y) => {
     const noise = seededNoise(seed + x * 3, y * 7);
     const luma = clamp(lumaOf(r, g, b) * 1.25 + (noise - 0.5) * 0.55, 0, 1);
     const value = luma > 0.66 ? 235 : luma > 0.34 ? 96 : 10;
@@ -191,7 +205,7 @@ function drawDeadChannel(
   });
 
   drawCanvasClip(ctx, mapped, points, options.alpha, false, `contrast(${1.35 + options.intensity * 0.22}) grayscale(0.65)`);
-  drawRgbGhost(ctx, mapped, points, preset.rgbShift * options.intensity, options.alpha * 0.22, false);
+  drawRgbGhost(ctx, mapped, points, preset.rgbShift * options.intensity, options.alpha * 0.22, false, options.quality);
   drawDeadChannelTears(ctx, points, preset, options);
 }
 
@@ -211,8 +225,8 @@ function drawHypercolorCctv(
     `contrast(${1.34 + options.intensity * 0.16}) saturate(${2.35 + options.intensity * 0.3}) brightness(0.92) hue-rotate(${12 + options.motion * 16}deg)`,
   );
 
-  drawRgbGhost(ctx, pixelBuffer, points, preset.rgbShift * 0.55 * options.intensity, options.alpha * 0.2, true);
-  drawScanlines(ctx, points, preset.scanlines * 0.75, options.alpha, '#001d22');
+  drawRgbGhost(ctx, pixelBuffer, points, preset.rgbShift * 0.55 * options.intensity, options.alpha * 0.2, true, options.quality);
+  drawScanlines(ctx, points, preset.scanlines * 0.75, options.alpha, '#001d22', options.quality);
 }
 
 function drawCanvasClip(
@@ -223,13 +237,14 @@ function drawCanvasClip(
   smoothing: boolean,
   filter = 'none',
 ) {
+  const bounds = getPolygonBounds(points, ctx.canvas.width, ctx.canvas.height, 10);
   ctx.save();
   clipPolygon(ctx, points);
   ctx.imageSmoothingEnabled = smoothing;
   ctx.globalAlpha = alpha;
   ctx.globalCompositeOperation = 'source-over';
   ctx.filter = filter;
-  ctx.drawImage(source, 0, 0, ctx.canvas.width, ctx.canvas.height);
+  drawCanvasRegion(ctx, source, bounds);
   ctx.restore();
 }
 
@@ -240,33 +255,47 @@ function drawRgbGhost(
   shift: number,
   alpha: number,
   smoothing: boolean,
+  quality: RenderQuality,
 ) {
   if (shift < 1 || alpha <= 0) return;
 
+  const bounds = getPolygonBounds(points, ctx.canvas.width, ctx.canvas.height, shift + 10);
+  const scaledAlpha = alpha * quality.ghostAlphaMultiplier * (smoothing ? 1 : 0.95);
   ctx.save();
   clipPolygon(ctx, points);
   ctx.imageSmoothingEnabled = smoothing;
   ctx.globalCompositeOperation = 'screen';
-  ctx.globalAlpha = alpha;
+  ctx.globalAlpha = scaledAlpha;
   ctx.filter = 'contrast(1.35) saturate(1.45)';
-  ctx.drawImage(source, -shift, shift * 0.12, ctx.canvas.width, ctx.canvas.height);
-  ctx.globalAlpha = alpha * 0.72;
-  ctx.drawImage(source, shift * 0.72, -shift * 0.1, ctx.canvas.width, ctx.canvas.height);
+  drawCanvasRegion(ctx, source, bounds, -shift, shift * 0.12);
+  if (quality.ghostPasses > 1) {
+    ctx.globalAlpha = scaledAlpha * 0.72;
+    drawCanvasRegion(ctx, source, bounds, shift * 0.72, -shift * 0.1);
+  }
   ctx.restore();
 }
 
-function drawScanlines(ctx: CanvasRenderingContext2D, points: Point[], amount: number, alpha: number, color: string) {
+function drawScanlines(
+  ctx: CanvasRenderingContext2D,
+  points: Point[],
+  amount: number,
+  alpha: number,
+  color: string,
+  quality: RenderQuality,
+) {
   if (amount <= 0) return;
 
-  const step = Math.floor(clamp(9 - amount * 4, 4, 9));
+  const scaledAmount = amount * quality.scanlineAmountMultiplier;
+  const bounds = getPolygonBounds(points, ctx.canvas.width, ctx.canvas.height, 0);
+  const step = Math.floor(clamp((9 - scaledAmount * 4) * quality.scanlineStepMultiplier, 4, 15));
   ctx.save();
   clipPolygon(ctx, points);
   ctx.globalCompositeOperation = 'multiply';
-  ctx.globalAlpha = alpha * amount * 0.16;
+  ctx.globalAlpha = alpha * scaledAmount * 0.16;
   ctx.fillStyle = color;
 
-  for (let y = 0; y < ctx.canvas.height; y += step) {
-    ctx.fillRect(0, y, ctx.canvas.width, 1);
+  for (let y = bounds.y; y < bounds.y + bounds.height; y += step) {
+    ctx.fillRect(bounds.x, y, bounds.width, 1);
   }
 
   ctx.restore();
@@ -279,26 +308,27 @@ function drawDeadChannelTears(
   options: RenderOptions,
 ) {
   const seed = Math.floor(options.timeMs / 90);
-  const rows = Math.floor(clamp(3 + preset.noise * 7 + options.intensity, 4, 10));
+  const rows = Math.floor(clamp(3 + preset.noise * 7 + options.intensity, 4, 10) * options.quality.effectDetailMultiplier);
+  const bounds = getPolygonBounds(points, ctx.canvas.width, ctx.canvas.height, 6);
 
   ctx.save();
   clipPolygon(ctx, points);
   ctx.globalCompositeOperation = 'screen';
 
   for (let index = 0; index < rows; index += 1) {
-    const y = seededNoise(seed + 11, index) * ctx.canvas.height;
+    const y = bounds.y + seededNoise(seed + 11, index) * bounds.height;
     const height = 2 + seededNoise(seed + 23, index) * 9;
     const alpha = options.alpha * (0.06 + seededNoise(seed + 31, index) * 0.1);
     ctx.globalAlpha = alpha;
     ctx.fillStyle = index % 3 === 0 ? '#ffffff' : index % 3 === 1 ? '#ff2a2a' : '#245cff';
-    ctx.fillRect(0, y, ctx.canvas.width, height);
+    ctx.fillRect(bounds.x, y, bounds.width, height);
   }
 
   ctx.globalCompositeOperation = 'multiply';
-  ctx.globalAlpha = options.alpha * 0.22;
+  ctx.globalAlpha = options.alpha * 0.22 * options.quality.scanlineAmountMultiplier;
   ctx.fillStyle = '#000';
-  for (let y = 0; y < ctx.canvas.height; y += 5) {
-    ctx.fillRect(0, y, ctx.canvas.width, 1);
+  for (let y = bounds.y; y < bounds.y + bounds.height; y += Math.floor(5 * options.quality.scanlineStepMultiplier)) {
+    ctx.fillRect(bounds.x, y, bounds.width, 1);
   }
 
   ctx.restore();
@@ -333,13 +363,20 @@ function drawAiTrackerLabels(
   ctx.restore();
 }
 
-function drawFoldLines(ctx: CanvasRenderingContext2D, prism: PrismFrame, preset: VisualPreset, alpha: number, intensity: number) {
+function drawFoldLines(
+  ctx: CanvasRenderingContext2D,
+  prism: PrismFrame,
+  preset: VisualPreset,
+  alpha: number,
+  intensity: number,
+  quality: RenderQuality,
+) {
   ctx.save();
   ctx.setLineDash([9, 6]);
   ctx.lineWidth = 1 + intensity * 0.28;
   ctx.globalCompositeOperation = 'source-over';
 
-  prism.foldLines.slice(0, 9).forEach(([a, b], index) => {
+  prism.foldLines.slice(0, quality.maxFoldLines).forEach(([a, b], index) => {
     ctx.globalAlpha = alpha * (index % 2 ? 0.34 : 0.2);
     ctx.strokeStyle = index % 2 ? preset.accent : '#ffffff';
     ctx.beginPath();
@@ -351,7 +388,14 @@ function drawFoldLines(ctx: CanvasRenderingContext2D, prism: PrismFrame, preset:
   ctx.restore();
 }
 
-function drawCleanPrismEdges(ctx: CanvasRenderingContext2D, prism: PrismFrame, preset: VisualPreset, alpha: number, intensity: number) {
+function drawCleanPrismEdges(
+  ctx: CanvasRenderingContext2D,
+  prism: PrismFrame,
+  preset: VisualPreset,
+  alpha: number,
+  intensity: number,
+  quality: RenderQuality,
+) {
   ctx.save();
   ctx.setLineDash([]);
   ctx.globalAlpha = alpha;
@@ -374,7 +418,7 @@ function drawCleanPrismEdges(ctx: CanvasRenderingContext2D, prism: PrismFrame, p
   strokePolygon(ctx, prism.points);
   ctx.restore();
 
-  prism.anchors.forEach((anchor, index) => {
+  prism.anchors.slice(0, quality.maxAnchorMarkers).forEach((anchor, index) => {
     const size = 4.5 + intensity * 0.65;
     ctx.fillStyle = index % 2 ? preset.secondary : preset.accent;
     ctx.strokeStyle = '#050505';
@@ -391,11 +435,19 @@ function mapVideoToCanvas(
   key: string,
   maxWidth: number,
   smoothing: boolean,
+  options: RenderOptions,
   mapper: (r: number, g: number, b: number, x: number, y: number) => Rgb,
 ) {
-  const width = Math.max(1, Math.min(source.width, Math.floor(maxWidth)));
+  const scaledMaxWidth = Math.max(64, Math.floor(maxWidth * options.quality.mappedMaxWidthMultiplier));
+  const width = Math.max(1, Math.min(source.width, scaledMaxWidth));
   const height = Math.max(1, Math.floor(source.height * (width / source.width)));
-  const canvas = getWorkCanvas(`map:${key}`, width, height);
+  const refreshKey = `${width}x${height}:${Math.floor(options.timeMs / options.quality.mappedRefreshMs)}`;
+  const state = getWorkCanvas(`map:${key}`, width, height);
+  const canvas = state.canvas;
+  if (state.frameKey === refreshKey) {
+    return canvas;
+  }
+
   const targetCtx = canvas.getContext('2d', { willReadFrequently: true });
   if (!targetCtx) return source;
 
@@ -418,14 +470,17 @@ function mapVideoToCanvas(
   }
 
   targetCtx.putImageData(image, 0, 0);
+  state.frameKey = refreshKey;
   return canvas;
 }
 
 function getWorkCanvas(key: string, width: number, height: number) {
-  const canvas = workCanvases.get(key) ?? document.createElement('canvas');
-  ensureCanvasSize(canvas, width, height);
-  workCanvases.set(key, canvas);
-  return canvas;
+  const state = workCanvases.get(key) ?? { canvas: document.createElement('canvas'), frameKey: '' };
+  if (ensureCanvasSize(state.canvas, width, height)) {
+    state.frameKey = '';
+  }
+  workCanvases.set(key, state);
+  return state;
 }
 
 function strokePolygon(ctx: CanvasRenderingContext2D, points: Point[]) {

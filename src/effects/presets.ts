@@ -1,5 +1,6 @@
 export type FilterMode = 'thermal-vision' | 'ai-tracker' | 'rave-tricolor' | 'dead-channel' | 'hypercolor-cctv';
 export type PresetId = FilterMode;
+export type EffectMode = 'random' | PresetId;
 
 export type VisualPreset = {
   id: PresetId;

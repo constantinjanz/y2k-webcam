@@ -22,6 +22,7 @@ export type PrismFrame = {
   tilt: number;
   motion: number;
   fps: number;
+  shapeId: number;
   logLines: string[];
 };
 
@@ -49,6 +50,8 @@ export function createPrismEngine() {
   let lastSheet: LastSheet | null = null;
   let lastFrameAt = 0;
   let fps = 0;
+  let currentShapeId = 0;
+  let nextShapeId = 1;
 
   return {
     update(rawHands: TrackedHand[], now: number, options: PrismOptions): PrismFrame {
@@ -60,6 +63,10 @@ export function createPrismEngine() {
       const liveSheet = activation.effectActive ? buildLiveSheet(anchorFrame.anchors, options, lastSheet) : null;
 
       if (liveSheet) {
+        if (!lastSheet) {
+          currentShapeId = nextShapeId;
+          nextShapeId += 1;
+        }
         lastActiveAt = now;
         if (liveSheet.crossing) {
           lastCrossingAt = now;
@@ -76,6 +83,7 @@ export function createPrismEngine() {
           sheetState: 'ACTIVE',
           decay: 1,
           fps,
+          shapeId: currentShapeId,
         });
       }
 
@@ -90,9 +98,13 @@ export function createPrismEngine() {
             sheetState: missingFor <= HOLD_MS ? 'ACTIVE' : 'FADING',
             decay,
             fps,
+            shapeId: currentShapeId,
           });
         }
       }
+
+      lastSheet = null;
+      currentShapeId = 0;
 
       return buildFrame(anchorFrame, null, {
         effectActive: false,
@@ -100,6 +112,7 @@ export function createPrismEngine() {
         sheetState: 'INACTIVE',
         decay: 0,
         fps,
+        shapeId: 0,
       });
     },
     reset() {
@@ -110,6 +123,8 @@ export function createPrismEngine() {
       lastSheet = null;
       lastFrameAt = 0;
       fps = 0;
+      currentShapeId = 0;
+      nextShapeId = 1;
     },
   };
 }
@@ -153,7 +168,7 @@ function buildLiveSheet(anchors: FingerAnchor[], options: PrismOptions, previous
 function buildFrame(
   anchorFrame: AnchorFrame,
   sheet: LastSheet | null,
-  state: Pick<PrismFrame, 'effectActive' | 'renderActive' | 'sheetState' | 'decay' | 'fps'>,
+  state: Pick<PrismFrame, 'effectActive' | 'renderActive' | 'sheetState' | 'decay' | 'fps' | 'shapeId'>,
 ): PrismFrame {
   const points = sheet?.points ?? [];
   const crossing = Boolean(sheet?.crossing);

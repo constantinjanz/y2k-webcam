@@ -17,6 +17,13 @@ export type CanvasBuffers = {
   feedback: HTMLCanvasElement;
 };
 
+export type CanvasBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 export function createCanvasBuffers(): CanvasBuffers {
   return {
     pixel: document.createElement('canvas'),
@@ -38,8 +45,8 @@ export function ensureCanvasSize(canvas: HTMLCanvasElement, width: number, heigh
   return false;
 }
 
-export function resizeCanvasToDisplaySize(canvas: HTMLCanvasElement) {
-  const dpr = Math.min(window.devicePixelRatio || 1, 1.25);
+export function resizeCanvasToDisplaySize(canvas: HTMLCanvasElement, maxDpr = 1.25) {
+  const dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
   const width = Math.max(1, Math.floor(canvas.clientWidth * dpr));
   const height = Math.max(1, Math.floor(canvas.clientHeight * dpr));
   const changed = canvas.width !== width || canvas.height !== height;
@@ -135,6 +142,60 @@ export function clipPolygon(ctx: CanvasRenderingContext2D, points: Point[]) {
 
   ctx.closePath();
   ctx.clip();
+}
+
+export function getPolygonBounds(
+  points: Point[],
+  canvasWidth: number,
+  canvasHeight: number,
+  padding = 0,
+): CanvasBounds {
+  if (!points.length) {
+    return { x: 0, y: 0, width: canvasWidth, height: canvasHeight };
+  }
+
+  let minX = canvasWidth;
+  let minY = canvasHeight;
+  let maxX = 0;
+  let maxY = 0;
+
+  points.forEach((point) => {
+    minX = Math.min(minX, point.x);
+    minY = Math.min(minY, point.y);
+    maxX = Math.max(maxX, point.x);
+    maxY = Math.max(maxY, point.y);
+  });
+
+  const x = Math.max(0, Math.floor(minX - padding));
+  const y = Math.max(0, Math.floor(minY - padding));
+  const right = Math.min(canvasWidth, Math.ceil(maxX + padding));
+  const bottom = Math.min(canvasHeight, Math.ceil(maxY + padding));
+
+  return {
+    x,
+    y,
+    width: Math.max(1, right - x),
+    height: Math.max(1, bottom - y),
+  };
+}
+
+export function drawCanvasRegion(
+  ctx: CanvasRenderingContext2D,
+  source: HTMLCanvasElement,
+  bounds: CanvasBounds,
+  offsetX = 0,
+  offsetY = 0,
+) {
+  if (!source.width || !source.height || bounds.width <= 0 || bounds.height <= 0) return;
+
+  const canvasWidth = Math.max(1, ctx.canvas.width);
+  const canvasHeight = Math.max(1, ctx.canvas.height);
+  const sx = Math.max(0, Math.floor((bounds.x / canvasWidth) * source.width));
+  const sy = Math.max(0, Math.floor((bounds.y / canvasHeight) * source.height));
+  const sw = Math.max(1, Math.min(source.width - sx, Math.ceil((bounds.width / canvasWidth) * source.width)));
+  const sh = Math.max(1, Math.min(source.height - sy, Math.ceil((bounds.height / canvasHeight) * source.height)));
+
+  ctx.drawImage(source, sx, sy, sw, sh, bounds.x + offsetX, bounds.y + offsetY, bounds.width, bounds.height);
 }
 
 export function drawGlitchLineNoise(
