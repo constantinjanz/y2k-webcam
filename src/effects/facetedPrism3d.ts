@@ -25,11 +25,11 @@ export function createFacetedPrismRenderer() {
   const renderer = new THREE.WebGLRenderer({
     alpha: true,
     antialias: true,
-    preserveDrawingBuffer: true,
   });
   const scene = new THREE.Scene();
   const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1200, 1200);
   const group = new THREE.Group();
+  const materialCache = new Map<string, { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture; material: THREE.MeshBasicMaterial }>();
   const edgeMaterial = new THREE.LineBasicMaterial({
     color: 0xf7f7f7,
     transparent: true,
@@ -116,6 +116,7 @@ export function createFacetedPrismRenderer() {
     dispose() {
       clearGroup(group);
       edgeMaterial.dispose();
+      disposeMaterialCache(materialCache);
       renderer.dispose();
     },
   };
@@ -131,7 +132,7 @@ export function createFacetedPrismRenderer() {
     if (points.length < 3) return;
 
     const geometry = createPolygonGeometry(points, lift);
-    const material = createSurfaceMaterial(source, effectId, options);
+    const material = getSurfaceMaterial(source, effectId, options, lift ? 'lift' : 'face');
     const mesh = new THREE.Mesh(geometry, material);
     target.add(mesh);
     addEdges(target, geometry);
@@ -145,33 +146,52 @@ export function createFacetedPrismRenderer() {
     options: Parameters<typeof renderSurfaceEffectCanvas>[2],
   ) {
     const geometry = createQuadGeometry(points);
-    const material = createSurfaceMaterial(source, effectId, options);
+    const material = getSurfaceMaterial(source, effectId, options, 'side');
     const mesh = new THREE.Mesh(geometry, material);
     target.add(mesh);
     addEdges(target, geometry);
   }
 
-  function createSurfaceMaterial(
+  function getSurfaceMaterial(
     source: HTMLCanvasElement,
     effectId: SurfaceEffectId,
     options: Parameters<typeof renderSurfaceEffectCanvas>[2],
+    role: 'face' | 'side' | 'lift',
   ) {
     const canvas = renderSurfaceEffectCanvas(source, effectId, options);
+    const key = `${role}:${effectId}`;
+    const cached = materialCache.get(key);
+
+    if (cached && cached.canvas === canvas) {
+      cached.texture.needsUpdate = true;
+      cached.material.opacity = options.alpha;
+      return cached.material;
+    }
+
+    if (cached) {
+      cached.texture.dispose();
+      cached.material.dispose();
+    }
+
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
-    texture.needsUpdate = true;
     texture.wrapS = THREE.ClampToEdgeWrapping;
     texture.wrapT = THREE.ClampToEdgeWrapping;
     texture.minFilter = THREE.LinearFilter;
     texture.magFilter = THREE.LinearFilter;
+    texture.needsUpdate = true;
 
-    return new THREE.MeshBasicMaterial({
+    const material = new THREE.MeshBasicMaterial({
       map: texture,
       transparent: true,
       opacity: options.alpha,
       side: THREE.DoubleSide,
       depthWrite: true,
     });
+    material.userData.persistent = true;
+
+    materialCache.set(key, { canvas, texture, material });
+    return material;
   }
 
   function addEdges(target: THREE.Group, geometry: THREE.BufferGeometry) {
@@ -254,9 +274,18 @@ function disposeObject(object: THREE.Object3D) {
 }
 
 function disposeMaterial(material: THREE.Material) {
+  if (material.userData.persistent) return;
   const maybeMapped = material as THREE.Material & { map?: THREE.Texture };
   maybeMapped.map?.dispose();
   material.dispose();
+}
+
+function disposeMaterialCache(cache: Map<string, { texture: THREE.CanvasTexture; material: THREE.MeshBasicMaterial }>) {
+  cache.forEach(({ texture, material }) => {
+    texture.dispose();
+    material.dispose();
+  });
+  cache.clear();
 }
 
 function getFaceEffect(faceEffectIds: PresetId[], index: number): PresetId {
