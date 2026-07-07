@@ -32,6 +32,9 @@ type ShapePresetAssignment = {
   presetId: PresetId;
 };
 
+const STABLE_CANVAS_MAX_DPR = 1.25;
+const TRACKING_INTERVAL_MS = 16;
+
 const HAND_CONNECTIONS = [
   [0, 1],
   [1, 2],
@@ -131,7 +134,7 @@ export function CameraStage() {
     }
 
     const currentQuality = qualityRef.current;
-    const { width, height } = resizeCanvasToDisplaySize(canvas, currentQuality.canvasMaxDpr);
+    const { width, height } = resizeCanvasToDisplaySize(canvas, STABLE_CANVAS_MAX_DPR);
     const settings = settingsRef.current;
 
     ctx.save();
@@ -157,7 +160,7 @@ export function CameraStage() {
     if (
       tracker &&
       video.currentTime !== lastVideoTimeRef.current &&
-      now - lastDetectionAtRef.current >= currentQuality.detectionIntervalMs
+      now - lastDetectionAtRef.current >= TRACKING_INTERVAL_MS
     ) {
       lastVideoTimeRef.current = video.currentTime;
       lastDetectionAtRef.current = now;

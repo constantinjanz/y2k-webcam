@@ -2,8 +2,6 @@ export type RenderQualityLevel = 'full' | 'boost';
 
 export type RenderQuality = {
   level: RenderQualityLevel;
-  canvasMaxDpr: number;
-  detectionIntervalMs: number;
   pixelScaleMultiplier: number;
   mappedMaxWidthMultiplier: number;
   mappedRefreshMs: number;
@@ -21,8 +19,6 @@ export type RenderQuality = {
 
 export const FULL_RENDER_QUALITY: RenderQuality = {
   level: 'full',
-  canvasMaxDpr: 1.25,
-  detectionIntervalMs: 16,
   pixelScaleMultiplier: 1,
   mappedMaxWidthMultiplier: 1,
   mappedRefreshMs: 34,
@@ -40,8 +36,6 @@ export const FULL_RENDER_QUALITY: RenderQuality = {
 
 export const BOOST_RENDER_QUALITY: RenderQuality = {
   level: 'boost',
-  canvasMaxDpr: 0.82,
-  detectionIntervalMs: 66,
   pixelScaleMultiplier: 0.68,
   mappedMaxWidthMultiplier: 0.68,
   mappedRefreshMs: 96,
