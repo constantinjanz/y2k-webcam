@@ -17,6 +17,8 @@ type LocalPoint = {
   x: number;
   y: number;
   z: number;
+  u: number;
+  v: number;
 };
 
 export function createFacetedPrismRenderer() {
@@ -68,7 +70,7 @@ export function createFacetedPrismRenderer() {
 
       const depth = prism.depth * (options.quality.level === 'boost' ? 0.72 : 1);
       const faceAlpha = clamp(prism.decay * 0.96, 0, 1);
-      const frontPoints = prism.points.map((point) => toLocalPoint(point, prism.center, prism.rotation.roll, depth));
+      const frontPoints = prism.points.map((point) => toLocalPoint(point, prism.center, prism.rotation.roll, depth, source));
       const backPoints = frontPoints.map((point) => ({ ...point, z: point.z - depth }));
       const faceOptions = {
         alpha: faceAlpha,
@@ -94,7 +96,7 @@ export function createFacetedPrismRenderer() {
       const overlapEffectId = options.overlapEffectId;
       if (overlapEffectId) {
         prism.overlapRegions.forEach((region) => {
-          const overlapPoints = region.map((point) => toLocalPoint(point, prism.center, prism.rotation.roll, depth + 8));
+          const overlapPoints = region.map((point) => toLocalPoint(point, prism.center, prism.rotation.roll, depth + 8, source));
           addFaceMesh(group, overlapPoints, source, overlapEffectId, {
             ...faceOptions,
             alpha: clamp(prism.decay * 0.98, 0, 1),
@@ -158,6 +160,8 @@ export function createFacetedPrismRenderer() {
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.needsUpdate = true;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
     texture.minFilter = THREE.LinearFilter;
     texture.magFilter = THREE.LinearFilter;
 
@@ -177,7 +181,7 @@ export function createFacetedPrismRenderer() {
   }
 }
 
-function toLocalPoint(point: Point, center: Point, roll: number, depth: number): LocalPoint {
+function toLocalPoint(point: Point, center: Point, roll: number, depth: number, source: HTMLCanvasElement): LocalPoint {
   const x = point.x - center.x;
   const y = -(point.y - center.y);
   const cos = Math.cos(roll);
@@ -188,19 +192,20 @@ function toLocalPoint(point: Point, center: Point, roll: number, depth: number):
     x: x * cos - y * sin,
     y: x * sin + y * cos,
     z: clamp(z, -depth * 0.15, depth * 1.15),
+    u: clamp(point.x / Math.max(1, source.width), 0, 1),
+    v: clamp(point.y / Math.max(1, source.height), 0, 1),
   };
 }
 
 function createPolygonGeometry(points: LocalPoint[], lift: boolean) {
-  const bounds = getLocalBounds(points);
   const center = polygonCenter(points);
   const vertices: number[] = [center.x, center.y, (center.z ?? 0) + (lift ? 1.5 : 0)];
-  const uvs: number[] = [toUvX(center.x, bounds), toUvY(center.y, bounds)];
+  const uvs: number[] = [average(points.map((point) => point.u)), average(points.map((point) => point.v))];
   const indices: number[] = [];
 
   points.forEach((point) => {
     vertices.push(point.x, point.y, point.z + (lift ? 1.5 : 0));
-    uvs.push(toUvX(point.x, bounds), toUvY(point.y, bounds));
+    uvs.push(point.u, point.v);
   });
 
   for (let index = 1; index <= points.length; index += 1) {
@@ -213,7 +218,7 @@ function createPolygonGeometry(points: LocalPoint[], lift: boolean) {
 
 function createQuadGeometry(points: LocalPoint[]) {
   const vertices = points.flatMap((point) => [point.x, point.y, point.z]);
-  const uvs = [0, 1, 1, 1, 1, 0, 0, 0];
+  const uvs = points.flatMap((point) => [point.u, point.v]);
   return makeGeometry(vertices, uvs, [0, 1, 2, 0, 2, 3]);
 }
 
@@ -258,21 +263,7 @@ function getFaceEffect(faceEffectIds: PresetId[], index: number): PresetId {
   return faceEffectIds[index % Math.max(1, faceEffectIds.length)] ?? 'thermal-vision';
 }
 
-function getLocalBounds(points: LocalPoint[]) {
-  const xs = points.map((point) => point.x);
-  const ys = points.map((point) => point.y);
-  return {
-    minX: Math.min(...xs),
-    maxX: Math.max(...xs),
-    minY: Math.min(...ys),
-    maxY: Math.max(...ys),
-  };
-}
-
-function toUvX(x: number, bounds: ReturnType<typeof getLocalBounds>) {
-  return (x - bounds.minX) / Math.max(1, bounds.maxX - bounds.minX);
-}
-
-function toUvY(y: number, bounds: ReturnType<typeof getLocalBounds>) {
-  return 1 - (y - bounds.minY) / Math.max(1, bounds.maxY - bounds.minY);
+function average(values: number[]) {
+  if (!values.length) return 0.5;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
