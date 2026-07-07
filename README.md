@@ -2,17 +2,19 @@
 
 A browser-based creative camera app styled like dark Windows 98 webcam tracer software.
 
-Open the app, grant camera access, and extend fingers to pin a live video sheet to your hands. The core interaction is one focused instrument: extended fingertips become anchor points for a dynamic glitch prism.
+Open the app, grant camera access, and extend fingers to pin a live video prism to your hands. The core interaction is one focused instrument: extended fingertips become anchor points for a dynamic faceted glitch prism, with the original 2D sheet available as a switchable mode.
 
 ## Features
 
 - Live mirrored webcam canvas.
 - MediaPipe Tasks Vision hand tracking with up to two hands.
 - Extended-finger anchor detection for thumb, index, middle, ring, and pinky.
-- One prism sheet generated from active fingertip anchors.
-- Triangle, quadrilateral, and multi-point polygon sheet rendering.
-- Crossing/twist distortion when anchor lines fold through each other.
-- Five sheet style families: Xerox Rave, Club Flyer, Webcam 2001, Dirty Scanner, and Acid Broadcast.
+- Default 3D faceted prism mode rendered with Three.js.
+- Switchable 2D prism sheet mode.
+- Triangle, quadrilateral, and multi-point polygon rendering.
+- Crossing/twist distortion with exact overlap regions filled by a second random effect.
+- Five main video filter modes: Thermal Vision, AI Tracker, Rave Tricolor, Dead Channel, and Hypercolor CCTV.
+- Three overlap-only effects: Glass Tear, Heat Ghost, and Signal Invert.
 - Technical tracking stream with real hand, finger, anchor, sheet, FPS, and crossing state.
 - Optional debug hand landmarks and fingertip labels.
 - Canvas recording/export through `canvas.captureStream()` and `MediaRecorder`.
@@ -49,12 +51,13 @@ npm.cmd run build
 
 - Fist: no prism sheet.
 - One hand with one extended finger: no effect.
-- One hand with at least two extended fingers: small prism sheet.
+- One hand with at least two extended fingers: small 2D prism sheet.
 - Two hands with one finger each: no effect.
 - Two fingers on one hand plus one finger on the other hand: triangle prism.
 - Thumb and index on both hands: classic finger-frame quad.
 - More extended fingers: larger, more complex polygon sheet.
-- Twisted or crossing anchors: stronger crossing/fold distortion.
+- 3D mode: at least three active fingertip anchors are required.
+- Twisted or crossing anchors: exact overlap regions receive a second random effect that is not the current primary filter.
 
 There is no pinch mode and no swipe mode. Thumb-index distance is never used as an effect trigger.
 

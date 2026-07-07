@@ -40,12 +40,20 @@ export function TrackingStream({ snapshot, cameraActive, modelReady }: TrackingS
             <dd>{snapshot.sheetState.toLowerCase()}</dd>
           </div>
           <div>
+            <dt>shape</dt>
+            <dd>{snapshot.shapeMode === '3d' ? 'faceted_3d' : 'sheet_2d'}</dd>
+          </div>
+          <div>
             <dt>cross</dt>
             <dd>{snapshot.crossing ? 'detected' : 'clear'}</dd>
           </div>
           <div>
             <dt>preset</dt>
             <dd>{snapshot.preset.toLowerCase().replaceAll(' ', '_')}</dd>
+          </div>
+          <div>
+            <dt>overlap</dt>
+            <dd>{snapshot.overlapEffect.toLowerCase().replaceAll(' ', '_')}</dd>
           </div>
           <div>
             <dt>fps</dt>

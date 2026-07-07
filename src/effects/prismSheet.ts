@@ -4,6 +4,7 @@ import { clamp, type Point } from '../utils/math';
 import { drawCrossingEffect } from './crossingEffect';
 import type { VisualPreset } from './presets';
 import type { RenderQuality } from './renderQuality';
+import { drawSurfaceEffectClip, type SurfaceEffectId } from './surfaceEffects';
 
 type RenderOptions = {
   alpha: number;
@@ -49,6 +50,8 @@ export function drawPrismSheet(
   timeMs: number,
   intensity: number,
   quality: RenderQuality,
+  overlapEffectId: SurfaceEffectId | null = null,
+  overlapSource?: HTMLCanvasElement,
 ) {
   if (!prism.renderActive || prism.decay <= 0 || prism.points.length < 3) return;
 
@@ -72,6 +75,10 @@ export function drawPrismSheet(
 
   if (prism.crossing) {
     drawCrossingEffect(ctx, pixelBuffer, prism, preset, timeMs, intensity, quality);
+  }
+
+  if (overlapEffectId && prism.overlapRegions.length) {
+    drawOverlapRegions(ctx, overlapSource ?? pixelBuffer, prism, overlapEffectId, timeMs, intensity, quality);
   }
 
   drawCleanPrismEdges(ctx, prism, preset, alpha, intensity, quality);
@@ -428,6 +435,28 @@ function drawCleanPrismEdges(
   });
 
   ctx.restore();
+}
+
+function drawOverlapRegions(
+  ctx: CanvasRenderingContext2D,
+  source: HTMLCanvasElement,
+  prism: PrismFrame,
+  effectId: SurfaceEffectId,
+  timeMs: number,
+  intensity: number,
+  quality: RenderQuality,
+) {
+  const motion = clamp(prism.motion / 48, 0, 1);
+
+  prism.overlapRegions.forEach((region) => {
+    drawSurfaceEffectClip(ctx, source, region, effectId, {
+      alpha: clamp(prism.decay * 0.94, 0, 1),
+      intensity: intensity + 0.12,
+      motion,
+      timeMs,
+      quality,
+    });
+  });
 }
 
 function mapVideoToCanvas(

@@ -1,9 +1,16 @@
 import { createAnchorTracker, type AnchorFrame } from './anchors';
 import { FINGER_NAMES, type FingerAnchor, type FingerName, type HandFingerState } from './fingerState';
 import type { TrackedHand } from './handTracker';
-import { angleBetween, clamp, distance, expandFromCenter, polygonCenter, type Point } from '../utils/math';
+import { angleBetween, clamp, distance, expandFromCenter, lerp, polygonCenter, type Point } from '../utils/math';
+import { findPolygonOverlapRegions } from '../utils/polygonOverlap';
 
 export type SheetState = 'ACTIVE' | 'FADING' | 'INACTIVE';
+
+export type PrismRotation = {
+  yaw: number;
+  pitch: number;
+  roll: number;
+};
 
 export type PrismFrame = {
   hands: HandFingerState[];
@@ -12,6 +19,7 @@ export type PrismFrame = {
   points: Point[];
   foldLines: Array<[Point, Point]>;
   crossingPoints: Point[];
+  overlapRegions: Point[][];
   effectActive: boolean;
   renderActive: boolean;
   sheetState: SheetState;
@@ -20,6 +28,8 @@ export type PrismFrame = {
   center: Point;
   distance: number;
   tilt: number;
+  depth: number;
+  rotation: PrismRotation;
   motion: number;
   fps: number;
   shapeId: number;
@@ -34,19 +44,21 @@ type PrismOptions = {
 
 type LastSheet = Pick<
   PrismFrame,
-  'points' | 'foldLines' | 'crossingPoints' | 'crossing' | 'center' | 'distance' | 'tilt'
+  'points' | 'foldLines' | 'crossingPoints' | 'overlapRegions' | 'crossing' | 'center' | 'distance' | 'tilt' | 'depth' | 'rotation'
 > & { motion: number };
 
 const HOLD_MS = 220;
 const DECAY_MS = 760;
 const SHEET_LERP = 0.3;
 const CROSSING_STICKY_MS = 220;
+const EMPTY_ROTATION: PrismRotation = { yaw: 0, pitch: 0, roll: 0 };
 
 export function createPrismEngine() {
   const anchorTracker = createAnchorTracker();
   let lastActiveAt = 0;
   let lastCrossingAt = 0;
   let lastCrossingPoints: Point[] = [];
+  let lastCrossingOverlapRegions: Point[][] = [];
   let lastSheet: LastSheet | null = null;
   let lastFrameAt = 0;
   let fps = 0;
@@ -71,9 +83,11 @@ export function createPrismEngine() {
         if (liveSheet.crossing) {
           lastCrossingAt = now;
           lastCrossingPoints = liveSheet.crossingPoints;
+          lastCrossingOverlapRegions = liveSheet.overlapRegions;
         } else if (now - lastCrossingAt < CROSSING_STICKY_MS) {
           liveSheet.crossing = true;
           liveSheet.crossingPoints = lastCrossingPoints;
+          liveSheet.overlapRegions = lastCrossingOverlapRegions;
         }
         lastSheet = liveSheet;
 
@@ -120,6 +134,7 @@ export function createPrismEngine() {
       lastActiveAt = 0;
       lastCrossingAt = 0;
       lastCrossingPoints = [];
+      lastCrossingOverlapRegions = [];
       lastSheet = null;
       lastFrameAt = 0;
       fps = 0;
@@ -149,18 +164,25 @@ function buildLiveSheet(anchors: FingerAnchor[], options: PrismOptions, previous
   const center = polygonCenter(points);
   const foldLines = buildFoldLines(anchors, points);
   const crossingPoints = findCrossingPoints(points, foldLines);
+  const crossing = crossingPoints.length > 0 || isTwisted(anchors);
+  const overlapRegions = crossing ? findPolygonOverlapRegions(points) : [];
   const zValues = anchors.map((anchor) => anchor.z);
   const tilt = clamp((Math.max(...zValues, 0) - Math.min(...zValues, 0)) * 9, -1, 1);
   const maxDistance = points.reduce((largest, point) => Math.max(largest, distance(center, point)), 0);
+  const targetRotation = getSheetRotation(points, center);
+  const targetDepth = clamp(maxDistance * (0.42 + Math.abs(tilt) * 0.18), 42, 190);
 
   return {
     points,
     foldLines,
     crossingPoints,
-    crossing: crossingPoints.length > 0 || isTwisted(anchors),
+    overlapRegions,
+    crossing,
     center,
     distance: maxDistance,
     tilt,
+    depth: previousSheet ? lerp(previousSheet.depth, targetDepth, 0.24) : targetDepth,
+    rotation: smoothRotation(previousSheet?.rotation, targetRotation, 0.22),
     motion,
   };
 }
@@ -180,10 +202,13 @@ function buildFrame(
     points,
     foldLines: sheet?.foldLines ?? [],
     crossingPoints: sheet?.crossingPoints ?? [],
+    overlapRegions: sheet?.overlapRegions ?? [],
     crossing,
     center: sheet?.center ?? { x: 0, y: 0, z: 0 },
     distance: sheet?.distance ?? 0,
     tilt: sheet?.tilt ?? 0,
+    depth: sheet?.depth ?? 0,
+    rotation: sheet?.rotation ?? EMPTY_ROTATION,
     motion: sheet?.motion ?? 0,
     logLines: makeLogLines(anchorFrame, state.sheetState, crossing),
     ...state,
@@ -366,6 +391,64 @@ function getPointMotion(previous: Point[] | undefined, next: Point[]) {
 
   const total = next.reduce((sum, point, index) => sum + distance(point, previous[index]), 0);
   return total / next.length;
+}
+
+function getSheetRotation(points: Point[], center: Point): PrismRotation {
+  const roll = getPrincipalRoll(points);
+  const yaw = clamp(-getDepthSlope(points, center, 'x') * 28, -0.9, 0.9);
+  const pitch = clamp(getDepthSlope(points, center, 'y') * 22, -0.76, 0.76);
+
+  return { yaw, pitch, roll };
+}
+
+function getPrincipalRoll(points: Point[]) {
+  if (points.length < 2) return 0;
+
+  let pair: [Point, Point] = [points[0], points[1]];
+  let largest = 0;
+
+  for (let a = 0; a < points.length; a += 1) {
+    for (let b = a + 1; b < points.length; b += 1) {
+      const length = distance(points[a], points[b]);
+      if (length > largest) {
+        largest = length;
+        pair = [points[a], points[b]];
+      }
+    }
+  }
+
+  return normalizeAngle(angleBetween(pair[0], pair[1]));
+}
+
+function getDepthSlope(points: Point[], center: Point, axis: 'x' | 'y') {
+  let weighted = 0;
+  let span = 0;
+  const centerZ = center.z ?? 0;
+
+  points.forEach((point) => {
+    const offset = axis === 'x' ? point.x - center.x : point.y - center.y;
+    weighted += offset * ((point.z ?? 0) - centerZ);
+    span += Math.abs(offset);
+  });
+
+  return span > 0.001 ? weighted / span : 0;
+}
+
+function smoothRotation(previous: PrismRotation | undefined, next: PrismRotation, amount: number): PrismRotation {
+  if (!previous) return next;
+
+  return {
+    yaw: lerp(previous.yaw, next.yaw, amount),
+    pitch: lerp(previous.pitch, next.pitch, amount),
+    roll: previous.roll + normalizeAngle(next.roll - previous.roll) * amount,
+  };
+}
+
+function normalizeAngle(angle: number) {
+  let normalized = angle;
+  while (normalized > Math.PI) normalized -= Math.PI * 2;
+  while (normalized < -Math.PI) normalized += Math.PI * 2;
+  return normalized;
 }
 
 function getPolygonArea(points: Point[]) {

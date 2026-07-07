@@ -1,4 +1,5 @@
 import type { SheetState } from '../vision/prismEngine';
+import type { ShapeMode } from '../effects/shapeModes';
 import { TrackingStream } from './TrackingStream';
 
 export type TechnicalHudSnapshot = {
@@ -8,6 +9,9 @@ export type TechnicalHudSnapshot = {
   crossing: boolean;
   fps: number;
   preset: string;
+  shapeMode: ShapeMode;
+  overlapEffect: string;
+  faceEffects: string[];
   leftFingers: string[];
   rightFingers: string[];
   singleFingers: string[];
@@ -36,6 +40,7 @@ export function TechnicalHud({ snapshot, cameraActive, modelReady, isRecording }
           <span className={cameraActive ? 'status-dot active' : 'status-dot'} />
           <span>CAMERA:{cameraActive ? 'ACTIVE' : 'IDLE'}</span>
           <span>MODEL:{modelReady ? 'HAND_LANDMARKER' : 'STANDBY'}</span>
+          <span>MODE:{snapshot.shapeMode === '3d' ? '3D' : '2D'}</span>
           <span>FPS:{Math.round(snapshot.fps)}</span>
           <span>REC:{isRecording ? 'ON' : 'OFF'}</span>
         </div>

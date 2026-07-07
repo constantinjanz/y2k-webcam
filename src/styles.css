@@ -616,6 +616,12 @@ input:focus-visible {
   width: 292px;
 }
 
+.shape-geometry-window {
+  top: 386px;
+  right: 16px;
+  width: 292px;
+}
+
 .transport-window {
   right: 16px;
   bottom: 28px;
@@ -727,6 +733,12 @@ input:focus-visible {
     width: calc(50vw - 20px);
   }
 
+  .shape-geometry-window {
+    top: calc(min(52vh, 460px) + 324px);
+    right: 14px;
+    width: calc(50vw - 20px);
+  }
+
   .transport-window {
     right: 14px;
     bottom: 14px;
@@ -772,6 +784,7 @@ input:focus-visible {
 
   .tracking-stream,
   .effect-palette-window,
+  .shape-geometry-window,
   .transport-window,
   .warning-window,
   .error-window {
@@ -789,14 +802,18 @@ input:focus-visible {
     top: calc(48vh + 250px);
   }
 
-  .transport-window {
+  .shape-geometry-window {
     top: calc(48vh + 488px);
+  }
+
+  .transport-window {
+    top: calc(48vh + 606px);
     bottom: auto;
   }
 
   .warning-window,
   .error-window {
-    top: calc(48vh + 606px);
+    top: calc(48vh + 724px);
     bottom: auto;
   }
 

@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { PRESETS, getPreset, type EffectMode, type PresetId, type VisualPreset } from '../effects/presets';
+import { createFacetedPrismRenderer } from '../effects/facetedPrism3d';
 import { drawPrismSheet } from '../effects/prismSheet';
 import { BOOST_RENDER_QUALITY, FULL_RENDER_QUALITY, type RenderQuality, type RenderQualityLevel } from '../effects/renderQuality';
+import { SHAPE_MODE_LABELS, type ShapeMode } from '../effects/shapeModes';
+import { OVERLAP_EFFECT_IDS, getSurfaceEffectLabel, type SurfaceEffectId } from '../effects/surfaceEffects';
 import { captureFeedback, drawFeedbackTrails } from '../effects/trails';
 import { useCanvasRecorder } from '../recording/useCanvasRecorder';
 import {
@@ -22,6 +25,7 @@ import { createPrismEngine, type PrismFrame } from '../vision/prismEngine';
 
 type CameraSettings = {
   effectMode: EffectMode;
+  shapeMode: ShapeMode;
   debug: boolean;
   sensitivity: number;
   intensity: number;
@@ -30,6 +34,17 @@ type CameraSettings = {
 type ShapePresetAssignment = {
   shapeId: number;
   presetId: PresetId;
+};
+
+type FacePresetAssignment = {
+  shapeId: number;
+  faceEffectIds: PresetId[];
+};
+
+type OverlapEffectAssignment = {
+  crossing: boolean;
+  gestureId: number;
+  effectId: SurfaceEffectId | null;
 };
 
 const STABLE_CANVAS_MAX_DPR = 1.25;
@@ -66,6 +81,9 @@ const EMPTY_HUD: TechnicalHudSnapshot = {
   crossing: false,
   fps: 0,
   preset: 'Random per shape',
+  shapeMode: '3d',
+  overlapEffect: 'none',
+  faceEffects: [],
   leftFingers: [],
   rightFingers: [],
   singleFingers: [],
@@ -80,6 +98,7 @@ export function CameraStage() {
   const rafRef = useRef<number | null>(null);
   const buffersRef = useRef<CanvasBuffers | null>(null);
   const prismEngineRef = useRef(createPrismEngine());
+  const facetedPrismRendererRef = useRef<ReturnType<typeof createFacetedPrismRenderer> | null>(null);
   const lastVideoTimeRef = useRef(-1);
   const lastDetectionAtRef = useRef(0);
   const lastDetectedHandsRef = useRef<TrackedHand[]>([]);
@@ -87,11 +106,14 @@ export function CameraStage() {
   const lastHudSnapshotRef = useRef<TechnicalHudSnapshot>(EMPTY_HUD);
   const qualityRef = useRef<RenderQuality>(FULL_RENDER_QUALITY);
   const shapePresetRef = useRef<ShapePresetAssignment>({ shapeId: 0, presetId: 'thermal-vision' });
+  const facePresetRef = useRef<FacePresetAssignment>({ shapeId: 0, faceEffectIds: [] });
+  const overlapEffectRef = useRef<OverlapEffectAssignment>({ crossing: false, gestureId: 0, effectId: null });
   const feedbackFrameRef = useRef(0);
   const startedRef = useRef(false);
   const modelReadyRef = useRef(false);
   const settingsRef = useRef<CameraSettings>({
     effectMode: 'random',
+    shapeMode: '3d',
     debug: true,
     sensitivity: 1,
     intensity: 1,
@@ -102,6 +124,7 @@ export function CameraStage() {
   const [status, setStatus] = useState('BOOT WAIT: camera module idle');
   const [error, setError] = useState('');
   const [effectMode, setEffectMode] = useState<EffectMode>('random');
+  const [shapeMode, setShapeMode] = useState<ShapeMode>('3d');
   const [renderQualityLevel, setRenderQualityLevel] = useState<RenderQualityLevel>('full');
   const [debug, setDebug] = useState(true);
   const [sensitivity, setSensitivity] = useState(1);
@@ -111,6 +134,7 @@ export function CameraStage() {
 
   settingsRef.current = {
     effectMode,
+    shapeMode,
     debug,
     sensitivity,
     intensity,
@@ -187,6 +211,15 @@ export function CameraStage() {
     }
 
     const preset = getPreset(resolvePresetId(settings.effectMode, prismFrame, shapePresetRef));
+    const canRender3d =
+      settings.shapeMode === '3d' &&
+      prismFrame.renderActive &&
+      prismFrame.anchors.length >= 3 &&
+      prismFrame.points.length >= 3;
+    const overlapEffectId = resolveOverlapEffectId(prismFrame, preset.id, overlapEffectRef);
+    const faceEffectIds = canRender3d ? resolveFaceEffectIds(prismFrame, facePresetRef) : facePresetRef.current.faceEffectIds;
+    const needsSurfaceSource = canRender3d || Boolean(overlapEffectId);
+
     renderPixelatedVideoBuffer(
       buffers.pixel,
       video,
@@ -194,6 +227,16 @@ export function CameraStage() {
       height,
       preset.pixelScale * nextQuality.pixelScaleMultiplier,
     );
+    if (needsSurfaceSource) {
+      renderPixelatedVideoBuffer(
+        buffers.scratch,
+        video,
+        width,
+        height,
+        nextQuality.level === 'boost' ? 0.78 : 1,
+      );
+    }
+    const surfaceSource = needsSurfaceSource ? buffers.scratch : buffers.pixel;
 
     ctx.save();
     ctx.filter = getBackgroundFilter(preset.id, settings.intensity);
@@ -207,7 +250,21 @@ export function CameraStage() {
       drawFeedbackTrails(ctx, buffers.feedback, preset, settings.intensity);
     }
 
-    drawPrismSheet(ctx, buffers.pixel, prismFrame, preset, now, settings.intensity, nextQuality);
+    if (canRender3d) {
+      if (!facetedPrismRendererRef.current) {
+        facetedPrismRendererRef.current = createFacetedPrismRenderer();
+      }
+      facetedPrismRendererRef.current.render(ctx, surfaceSource, prismFrame, {
+        faceEffectIds,
+        overlapEffectId,
+        timeMs: now,
+        intensity: settings.intensity,
+        quality: nextQuality,
+      });
+    } else if (settings.shapeMode === '2d') {
+      drawPrismSheet(ctx, buffers.pixel, prismFrame, preset, now, settings.intensity, nextQuality, overlapEffectId, surfaceSource);
+    }
+
     if (settings.intensity > 1.25 && Math.floor(now / 90) % 2 === 0) {
       drawGlitchLineNoise(
         ctx,
@@ -229,7 +286,7 @@ export function CameraStage() {
       drawDebugLandmarks(ctx, detectedHands, prismFrame, preset.accent, nextQuality);
     }
 
-    drawCornerHud(ctx, width, height, prismFrame, preset.label, nextQuality);
+    drawCornerHud(ctx, width, height, prismFrame, preset.label, nextQuality, settings.shapeMode, overlapEffectId);
     if (drawTrails) {
       feedbackFrameRef.current += 1;
       if (feedbackFrameRef.current % nextQuality.feedbackCaptureEvery === 0) {
@@ -240,7 +297,7 @@ export function CameraStage() {
 
     if (now - lastHudUpdateRef.current > 500) {
       lastHudUpdateRef.current = now;
-      const nextSnapshot = toHudSnapshot(prismFrame, preset, nextQuality);
+      const nextSnapshot = toHudSnapshot(prismFrame, preset, nextQuality, settings.shapeMode, overlapEffectId, faceEffectIds);
       if (!areHudSnapshotsEqual(lastHudSnapshotRef.current, nextSnapshot)) {
         lastHudSnapshotRef.current = nextSnapshot;
         setHudSnapshot(nextSnapshot);
@@ -293,6 +350,8 @@ export function CameraStage() {
       lastVideoTimeRef.current = -1;
       lastDetectionAtRef.current = 0;
       shapePresetRef.current = { shapeId: 0, presetId: 'thermal-vision' };
+      facePresetRef.current = { shapeId: 0, faceEffectIds: [] };
+      overlapEffectRef.current = { crossing: false, gestureId: 0, effectId: null };
       qualityRef.current = FULL_RENDER_QUALITY;
       feedbackFrameRef.current = 0;
       setRenderQualityLevel('full');
@@ -336,6 +395,8 @@ export function CameraStage() {
     lastVideoTimeRef.current = -1;
     lastDetectionAtRef.current = 0;
     shapePresetRef.current = { shapeId: 0, presetId: 'thermal-vision' };
+    facePresetRef.current = { shapeId: 0, faceEffectIds: [] };
+    overlapEffectRef.current = { crossing: false, gestureId: 0, effectId: null };
     qualityRef.current = FULL_RENDER_QUALITY;
     lastHudSnapshotRef.current = EMPTY_HUD;
     setHudSnapshot(EMPTY_HUD);
@@ -355,6 +416,8 @@ export function CameraStage() {
 
       streamRef.current?.getTracks().forEach((track) => track.stop());
       trackerRef.current?.close();
+      facetedPrismRendererRef.current?.dispose();
+      facetedPrismRendererRef.current = null;
       trackerRef.current = null;
     };
   }, [renderFrame]);
@@ -571,6 +634,28 @@ export function CameraStage() {
             </div>
           </div>
 
+          <div className="os-window control-deck shape-geometry-window" aria-label="Shape geometry">
+            <div className="os-titlebar">
+              <span>Shape/Geometry</span>
+              <div className="os-titlebar-buttons" aria-hidden="true">
+                <span>_</span>
+                <span>Ã—</span>
+              </div>
+            </div>
+            <div className="control-body">
+              <label className="control-field">
+                <span>SHAPE MODE</span>
+                <select value={shapeMode} onChange={(event) => setShapeMode(event.target.value as ShapeMode)}>
+                  <option value="3d">{SHAPE_MODE_LABELS['3d']}</option>
+                  <option value="2d">{SHAPE_MODE_LABELS['2d']}</option>
+                </select>
+              </label>
+              <p className="control-status">
+                STATUS: {shapeMode === '3d' ? 'FACETED VIDEO' : '2D VIDEO SHEET'}
+              </p>
+            </div>
+          </div>
+
           <div className="os-window transport-window" aria-label="Transport controls">
             <div className="os-titlebar">
               <span>Transport</span>
@@ -621,9 +706,68 @@ function resolvePresetId(
   return assignmentRef.current.presetId;
 }
 
+function resolveFaceEffectIds(
+  frame: PrismFrame,
+  assignmentRef: MutableRefObject<FacePresetAssignment>,
+): PresetId[] {
+  const faceCount = Math.max(3, frame.points.length + 2);
+
+  if (!frame.renderActive || frame.shapeId <= 0) {
+    return assignmentRef.current.faceEffectIds;
+  }
+
+  if (assignmentRef.current.shapeId !== frame.shapeId) {
+    assignmentRef.current = {
+      shapeId: frame.shapeId,
+      faceEffectIds: Array.from({ length: faceCount }, () => pickRandomPresetId()),
+    };
+  }
+
+  while (assignmentRef.current.faceEffectIds.length < faceCount) {
+    assignmentRef.current.faceEffectIds.push(pickRandomPresetId());
+  }
+
+  return assignmentRef.current.faceEffectIds.slice(0, faceCount);
+}
+
+function resolveOverlapEffectId(
+  frame: PrismFrame,
+  primaryPresetId: PresetId,
+  assignmentRef: MutableRefObject<OverlapEffectAssignment>,
+): SurfaceEffectId | null {
+  if (!frame.crossing || !frame.overlapRegions.length) {
+    if (!frame.crossing) {
+      assignmentRef.current = {
+        crossing: false,
+        gestureId: assignmentRef.current.gestureId,
+        effectId: null,
+      };
+    }
+    return null;
+  }
+
+  if (!assignmentRef.current.crossing || !assignmentRef.current.effectId) {
+    assignmentRef.current = {
+      crossing: true,
+      gestureId: assignmentRef.current.gestureId + 1,
+      effectId: pickRandomSurfaceEffectId([primaryPresetId]),
+    };
+  }
+
+  return assignmentRef.current.effectId;
+}
+
 function pickRandomPresetId(): PresetId {
   const index = Math.floor(Math.random() * PRESETS.length);
   return PRESETS[index]?.id ?? 'thermal-vision';
+}
+
+function pickRandomSurfaceEffectId(excluded: SurfaceEffectId[]): SurfaceEffectId {
+  const pool: SurfaceEffectId[] = [...PRESETS.map((preset) => preset.id), ...OVERLAP_EFFECT_IDS].filter(
+    (effectId) => !excluded.includes(effectId),
+  );
+  const index = Math.floor(Math.random() * pool.length);
+  return pool[index] ?? 'glass-tear';
 }
 
 function getAdaptiveRenderQuality(frame: PrismFrame, current: RenderQuality): RenderQuality {
@@ -656,8 +800,10 @@ function padCount(value: number) {
 }
 
 function getTrackingWarning(isStarted: boolean, snapshot: TechnicalHudSnapshot) {
-  if (!isStarted || snapshot.sheetState === 'ACTIVE') return '';
+  if (!isStarted) return '';
   if (snapshot.hands === 0) return 'No hands detected';
+  if (snapshot.shapeMode === '3d' && snapshot.anchors < 3) return '3D prism needs 3 anchors';
+  if (snapshot.sheetState === 'ACTIVE') return '';
   if (snapshot.anchors < 3) return 'No anchors detected';
   return 'Tracking unstable';
 }
@@ -820,10 +966,14 @@ function drawCornerHud(
   frame: PrismFrame,
   presetLabel: string,
   quality: RenderQuality,
+  shapeMode: ShapeMode,
+  overlapEffectId: SurfaceEffectId | null,
 ) {
   const pad = clamp(width * 0.022, 16, 34);
   const boostLabel = quality.level === 'boost' ? ' / q:boost' : '';
-  const text = `${presetLabel} / anchors:${frame.anchors.length} / sheet:${frame.sheetState} / cross:${frame.crossing ? 'yes' : 'no'}${boostLabel}`;
+  const shapeLabel = shapeMode === '3d' ? '3D FACET' : presetLabel;
+  const overlapLabel = overlapEffectId ? ` / fx:${toEffectToken(getSurfaceEffectLabel(overlapEffectId))}` : '';
+  const text = `${shapeLabel} / anchors:${frame.anchors.length} / sheet:${frame.sheetState} / cross:${frame.crossing ? 'yes' : 'no'}${overlapLabel}${boostLabel}`;
 
   ctx.save();
   ctx.font = `${clamp(width * 0.012, 12, 16)}px "Courier New", monospace`;
@@ -844,8 +994,23 @@ function drawCornerHud(
   ctx.restore();
 }
 
-function toHudSnapshot(frame: PrismFrame, preset: VisualPreset, quality: RenderQuality): TechnicalHudSnapshot {
-  const logs = quality.level === 'boost' ? [...frame.logLines, '> render quality auto_boost'] : frame.logLines;
+function toHudSnapshot(
+  frame: PrismFrame,
+  preset: VisualPreset,
+  quality: RenderQuality,
+  shapeMode: ShapeMode,
+  overlapEffectId: SurfaceEffectId | null,
+  faceEffectIds: PresetId[],
+): TechnicalHudSnapshot {
+  const faceEffects = shapeMode === '3d' ? faceEffectIds.slice(0, 6).map((effectId) => getPreset(effectId).label) : [];
+  const assignmentLogs = [
+    `> shape mode: ${shapeMode === '3d' ? 'faceted_3d' : 'sheet_2d'}`,
+    `> overlap fx: ${overlapEffectId ? toEffectToken(getSurfaceEffectLabel(overlapEffectId)) : 'none'}`,
+  ];
+  if (faceEffects.length) {
+    assignmentLogs.push(`> face filters: ${faceEffects.map(toEffectToken).join('/')}`);
+  }
+  const logs = quality.level === 'boost' ? [...frame.logLines, ...assignmentLogs, '> render quality auto_boost'] : [...frame.logLines, ...assignmentLogs];
 
   return {
     hands: frame.hands.length,
@@ -854,6 +1019,9 @@ function toHudSnapshot(frame: PrismFrame, preset: VisualPreset, quality: RenderQ
     crossing: frame.crossing,
     fps: frame.fps,
     preset: preset.label,
+    shapeMode,
+    overlapEffect: overlapEffectId ? getSurfaceEffectLabel(overlapEffectId) : 'none',
+    faceEffects,
     leftFingers: getFingersForHand(frame, 'left'),
     rightFingers: getFingersForHand(frame, 'right'),
     singleFingers: getFingersForHand(frame, 'single'),
@@ -869,6 +1037,9 @@ function areHudSnapshotsEqual(a: TechnicalHudSnapshot, b: TechnicalHudSnapshot) 
     a.crossing === b.crossing &&
     Math.abs(a.fps - b.fps) < 2 &&
     a.preset === b.preset &&
+    a.shapeMode === b.shapeMode &&
+    a.overlapEffect === b.overlapEffect &&
+    a.faceEffects.join('|') === b.faceEffects.join('|') &&
     a.leftFingers.join('|') === b.leftFingers.join('|') &&
     a.rightFingers.join('|') === b.rightFingers.join('|') &&
     a.singleFingers.join('|') === b.singleFingers.join('|') &&
@@ -880,4 +1051,8 @@ function getFingersForHand(frame: PrismFrame, handId: FingerAnchor['handId']) {
   const hand = frame.hands.find((candidate) => candidate.handId === handId);
   if (!hand) return [];
   return FINGER_NAMES.filter((finger) => hand.extended[finger]).map((finger) => finger.toUpperCase());
+}
+
+function toEffectToken(label: string) {
+  return label.toLowerCase().replaceAll(' ', '_');
 }
