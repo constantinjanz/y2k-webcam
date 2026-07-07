@@ -699,6 +699,34 @@ function drawDebugLandmarks(
   ctx.font = '12px "Courier New", monospace';
 
   if (quality.simplifyDebug) {
+    trackedHands.forEach((hand) => {
+      ctx.strokeStyle = 'rgba(54, 245, 199, 0.72)';
+      HAND_CONNECTIONS.forEach(([from, to]) => {
+        const a = hand.landmarks[from];
+        const b = hand.landmarks[to];
+        if (!a || !b) return;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      });
+
+      [
+        HAND_LANDMARK.THUMB_TIP,
+        HAND_LANDMARK.INDEX_TIP,
+        HAND_LANDMARK.MIDDLE_TIP,
+        HAND_LANDMARK.RING_TIP,
+        HAND_LANDMARK.PINKY_TIP,
+      ].forEach((index) => {
+        const point = hand.landmarks[index];
+        if (!point) return;
+        ctx.fillStyle = '#ffe84a';
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    });
+
     frame.anchors.slice(0, quality.maxAnchorMarkers).forEach((anchor) => {
       ctx.fillStyle = accent;
       ctx.beginPath();
