@@ -49,6 +49,7 @@ type OverlapEffectAssignment = {
 
 const STABLE_CANVAS_MAX_DPR = 1.25;
 const TRACKING_INTERVAL_MS = 16;
+const MAX_3D_ANCHORS = 8;
 
 const HAND_CONNECTIONS = [
   [0, 1],
@@ -122,6 +123,7 @@ export function CameraStage() {
 
   const [isStarted, setIsStarted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [setupCancelled, setSetupCancelled] = useState(false);
   const [status, setStatus] = useState('BOOT WAIT: camera module idle');
   const [error, setError] = useState('');
   const [effectMode, setEffectMode] = useState<EffectMode>('random');
@@ -212,8 +214,13 @@ export function CameraStage() {
     }
 
     const preset = getPreset(resolvePresetId(settings.effectMode, prismFrame, shapePresetRef));
+    const use2dSafetyFallback =
+      settings.shapeMode === '3d' &&
+      prismFrame.renderActive &&
+      prismFrame.anchors.length > MAX_3D_ANCHORS;
     const canRender3d =
       settings.shapeMode === '3d' &&
+      !use2dSafetyFallback &&
       prismFrame.renderActive &&
       prismFrame.anchors.length >= 3 &&
       prismFrame.points.length >= 3 &&
@@ -254,10 +261,10 @@ export function CameraStage() {
 
     if (canRender3d) {
       let rendered3d = false;
-      if (!facetedPrismRendererRef.current) {
-        facetedPrismRendererRef.current = createFacetedPrismRenderer();
-      }
       try {
+        if (!facetedPrismRendererRef.current) {
+          facetedPrismRendererRef.current = createFacetedPrismRenderer();
+        }
         rendered3d = facetedPrismRendererRef.current.render(ctx, surfaceSource, prismFrame, {
           faceEffectIds,
           overlapEffectId,
@@ -275,7 +282,7 @@ export function CameraStage() {
       if (!rendered3d) {
         drawPrismSheet(ctx, buffers.pixel, prismFrame, preset, now, settings.intensity, nextQuality, overlapEffectId, surfaceSource);
       }
-    } else if (settings.shapeMode === '2d') {
+    } else if (settings.shapeMode === '2d' || use2dSafetyFallback) {
       drawPrismSheet(ctx, buffers.pixel, prismFrame, preset, now, settings.intensity, nextQuality, overlapEffectId, surfaceSource);
     }
 
@@ -323,6 +330,8 @@ export function CameraStage() {
 
   const startCamera = useCallback(async () => {
     if (isLoading || isStarted) return;
+
+    setSetupCancelled(false);
 
     if (!navigator.mediaDevices?.getUserMedia) {
       setError('This browser does not expose camera access.');
@@ -434,8 +443,15 @@ export function CameraStage() {
     setHudSnapshot(EMPTY_HUD);
     setRenderQualityLevel('full');
     setIsStarted(false);
+    setSetupCancelled(false);
     setStatus('TRACE STOPPED: local camera stream closed');
   }, [recorder]);
+
+  const cancelSetup = useCallback(() => {
+    setSetupCancelled(true);
+    setError('');
+    setStatus('SETUP CANCELLED: camera module idle');
+  }, []);
 
   useEffect(() => {
     rafRef.current = requestAnimationFrame(renderFrame);
@@ -456,6 +472,7 @@ export function CameraStage() {
 
   const activeError = error || recorder.error;
   const warningMessage = getTrackingWarning(isStarted, hudSnapshot);
+  const setupPrompt = setupCancelled ? 'Setup cancelled. Camera module is standing by.' : 'Initialize hand tracking module?';
 
   return (
     <section className="camera-shell" aria-label="tracer_2k live camera app">
@@ -590,7 +607,12 @@ export function CameraStage() {
             <div className="setup-copy">
               <h1>tracer_2k</h1>
               <p>tracer_2k requires camera access.</p>
-              <p>Initialize hand tracking module?</p>
+              <p>{setupPrompt}</p>
+              {setupCancelled && (
+                <p className="setup-status" role="status" aria-live="polite">
+                  SETUP CANCELLED: camera module idle
+                </p>
+              )}
               <div className="privacy-grid" aria-label="Privacy status">
                 <span>LOCAL MODE: ON</span>
                 <span>UPLOADS: DISABLED</span>
@@ -600,8 +622,8 @@ export function CameraStage() {
                 <button className="os-button primary-button" type="button" onClick={startCamera} disabled={isLoading}>
                   {isLoading ? 'Booting...' : 'Boot tracer_2k'}
                 </button>
-                <button className="os-button secondary-button" type="button" onClick={() => setStatus('SETUP CANCELLED: camera module idle')}>
-                  Cancel
+                <button className="os-button secondary-button" type="button" onClick={cancelSetup} disabled={setupCancelled}>
+                  {setupCancelled ? 'Cancelled' : 'Cancel'}
                 </button>
               </div>
             </div>

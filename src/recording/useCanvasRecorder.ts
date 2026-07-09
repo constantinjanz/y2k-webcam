@@ -52,8 +52,13 @@ export function useCanvasRecorder(canvasRef: RefObject<HTMLCanvasElement | null>
       const link = document.createElement('a');
       link.href = url;
       link.download = `prismcam-${new Date().toISOString().replace(/[:.]/g, '-')}.webm`;
+      link.style.display = 'none';
+      document.body.append(link);
       link.click();
-      URL.revokeObjectURL(url);
+      window.setTimeout(() => {
+        URL.revokeObjectURL(url);
+        link.remove();
+      }, 1000);
       stream.getTracks().forEach((track) => track.stop());
       setIsRecording(false);
     };

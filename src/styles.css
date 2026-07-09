@@ -462,7 +462,7 @@ button:disabled {
   right: 332px;
   top: 120px;
   width: 330px;
-  z-index: 8;
+  z-index: 12;
 }
 
 .os-dialog-body,
@@ -548,6 +548,16 @@ button:disabled {
   gap: 3px;
   margin: 12px 0;
   padding: 7px;
+  border: 1px solid #000;
+  color: var(--terminal-green);
+  background: #050705;
+  box-shadow: inset 1px 1px #263326;
+  font-family: "Courier New", "Lucida Console", monospace;
+  font-size: 11px;
+}
+
+.setup-status {
+  padding: 6px 7px;
   border: 1px solid #000;
   color: var(--terminal-green);
   background: #050705;
@@ -749,11 +759,22 @@ input:focus-visible {
     display: none;
   }
 
-  .warning-window,
-  .error-window {
+  .warning-window {
     right: 14px;
     bottom: 98px;
     top: auto;
+  }
+
+  .error-window {
+    position: fixed;
+    left: 14px;
+    right: 14px;
+    top: 14px;
+    bottom: auto;
+    width: auto;
+    max-height: calc(100vh - 28px);
+    overflow: auto;
+    z-index: 20;
   }
 }
 
@@ -811,10 +832,18 @@ input:focus-visible {
     bottom: auto;
   }
 
-  .warning-window,
-  .error-window {
+  .warning-window {
     top: calc(48vh + 724px);
     bottom: auto;
+  }
+
+  .error-window {
+    position: fixed;
+    top: 8px;
+    bottom: auto;
+    max-height: calc(100vh - 16px);
+    overflow: auto;
+    z-index: 20;
   }
 
   .terminal-log {

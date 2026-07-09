@@ -8,10 +8,20 @@ type PolygonClippingRuntime = {
 
 const clipper = polygonClipping as unknown as PolygonClippingRuntime;
 const MIN_OVERLAP_AREA = 24;
+const MAX_EXACT_OVERLAP_POINTS = 6;
 
 export function findPolygonOverlapRegions(points: Point[]): Point[][] {
   if (points.length < 4) return [];
+  if (points.length > MAX_EXACT_OVERLAP_POINTS) return [];
 
+  try {
+    return findPolygonOverlapRegionsUnsafe(points);
+  } catch {
+    return [];
+  }
+}
+
+function findPolygonOverlapRegionsUnsafe(points: Point[]): Point[][] {
   const triangles = triangulateFan(points);
   if (triangles.length < 2) return [];
 
@@ -53,7 +63,9 @@ function toPolygon(points: Point[]): Polygon {
   return [points.map((point) => [point.x, point.y])];
 }
 
-function multiPolygonToRegions(multiPolygon: MultiPolygon): Point[][] {
+function multiPolygonToRegions(multiPolygon: MultiPolygon | null | undefined): Point[][] {
+  if (!multiPolygon) return [];
+
   return multiPolygon
     .map((polygon) => polygon[0] ?? [])
     .map((ring) => normalizeRing(ring.map(([x, y]) => ({ x, y, z: 0 }))))
