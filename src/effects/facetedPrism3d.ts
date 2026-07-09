@@ -38,10 +38,21 @@ export function createFacetedPrismRenderer() {
   });
   let lastWidth = 0;
   let lastHeight = 0;
+  let contextLost = false;
 
   renderer.setPixelRatio(1);
   renderer.setClearColor(0x000000, 0);
   renderer.autoClear = true;
+  edgeMaterial.userData.persistent = true;
+  renderer.domElement.addEventListener('webglcontextlost', (event) => {
+    event.preventDefault();
+    contextLost = true;
+  });
+  renderer.domElement.addEventListener('webglcontextrestored', () => {
+    contextLost = false;
+    lastWidth = 0;
+    lastHeight = 0;
+  });
   scene.add(group);
 
   return {
@@ -51,7 +62,9 @@ export function createFacetedPrismRenderer() {
       prism: PrismFrame,
       options: FacetedPrismRenderOptions,
     ) {
-      if (!source.width || !source.height || !prism.renderActive || prism.points.length < 3 || prism.decay <= 0) return;
+      if (contextLost || !source.width || !source.height || !prism.renderActive || prism.points.length < 3 || prism.decay <= 0) {
+        return false;
+      }
 
       const width = ctx.canvas.width;
       const height = ctx.canvas.height;
@@ -105,13 +118,25 @@ export function createFacetedPrismRenderer() {
         });
       }
 
-      renderer.render(scene, camera);
+      try {
+        renderer.render(scene, camera);
+      } catch (renderError) {
+        console.warn('3D prism renderer failed', renderError);
+        return false;
+      }
 
       ctx.save();
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = 1;
-      ctx.drawImage(renderer.domElement, 0, 0, width, height);
+      try {
+        ctx.drawImage(renderer.domElement, 0, 0, width, height);
+      } catch (drawError) {
+        console.warn('3D prism compositing failed', drawError);
+        ctx.restore();
+        return false;
+      }
       ctx.restore();
+      return true;
     },
     dispose() {
       clearGroup(group);
@@ -196,7 +221,7 @@ export function createFacetedPrismRenderer() {
 
   function addEdges(target: THREE.Group, geometry: THREE.BufferGeometry) {
     const edges = new THREE.EdgesGeometry(geometry, 28);
-    const lines = new THREE.LineSegments(edges, edgeMaterial.clone());
+    const lines = new THREE.LineSegments(edges, edgeMaterial);
     target.add(lines);
   }
 }
@@ -247,7 +272,6 @@ function makeGeometry(vertices: number[], uvs: number[], indices: number[]) {
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geometry.setIndex(indices);
-  geometry.computeVertexNormals();
   return geometry;
 }
 

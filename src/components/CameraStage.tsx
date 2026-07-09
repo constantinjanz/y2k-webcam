@@ -99,6 +99,7 @@ export function CameraStage() {
   const buffersRef = useRef<CanvasBuffers | null>(null);
   const prismEngineRef = useRef(createPrismEngine());
   const facetedPrismRendererRef = useRef<ReturnType<typeof createFacetedPrismRenderer> | null>(null);
+  const rendererFailureUntilRef = useRef(0);
   const lastVideoTimeRef = useRef(-1);
   const lastDetectionAtRef = useRef(0);
   const lastDetectedHandsRef = useRef<TrackedHand[]>([]);
@@ -215,7 +216,8 @@ export function CameraStage() {
       settings.shapeMode === '3d' &&
       prismFrame.renderActive &&
       prismFrame.anchors.length >= 3 &&
-      prismFrame.points.length >= 3;
+      prismFrame.points.length >= 3 &&
+      now >= rendererFailureUntilRef.current;
     const overlapEffectId = resolveOverlapEffectId(prismFrame, preset.id, overlapEffectRef);
     const faceEffectIds = canRender3d ? resolveFaceEffectIds(prismFrame, facePresetRef) : facePresetRef.current.faceEffectIds;
     const needsSurfaceSource = canRender3d || Boolean(overlapEffectId);
@@ -251,16 +253,28 @@ export function CameraStage() {
     }
 
     if (canRender3d) {
+      let rendered3d = false;
       if (!facetedPrismRendererRef.current) {
         facetedPrismRendererRef.current = createFacetedPrismRenderer();
       }
-      facetedPrismRendererRef.current.render(ctx, surfaceSource, prismFrame, {
-        faceEffectIds,
-        overlapEffectId,
-        timeMs: now,
-        intensity: settings.intensity,
-        quality: nextQuality,
-      });
+      try {
+        rendered3d = facetedPrismRendererRef.current.render(ctx, surfaceSource, prismFrame, {
+          faceEffectIds,
+          overlapEffectId,
+          timeMs: now,
+          intensity: settings.intensity,
+          quality: nextQuality,
+        });
+      } catch (renderError) {
+        console.warn('Faceted prism render failed; falling back to 2D sheet', renderError);
+        facetedPrismRendererRef.current?.dispose();
+        facetedPrismRendererRef.current = null;
+        rendererFailureUntilRef.current = now + 2000;
+      }
+
+      if (!rendered3d) {
+        drawPrismSheet(ctx, buffers.pixel, prismFrame, preset, now, settings.intensity, nextQuality, overlapEffectId, surfaceSource);
+      }
     } else if (settings.shapeMode === '2d') {
       drawPrismSheet(ctx, buffers.pixel, prismFrame, preset, now, settings.intensity, nextQuality, overlapEffectId, surfaceSource);
     }
@@ -320,10 +334,12 @@ export function CameraStage() {
 
     setIsLoading(true);
     setError('');
-      setStatus('REQUESTING CAMERA DEVICE...');
+    setStatus('REQUESTING CAMERA DEVICE...');
+
+    let stream: MediaStream | null = null;
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: {
           width: { ideal: 640 },
@@ -339,12 +355,6 @@ export function CameraStage() {
       video.playsInline = true;
       await video.play();
 
-      if (!trackerRef.current) {
-        setStatus('LOADING HAND_LANDMARKER MODULE...');
-        trackerRef.current = await createHandTracker();
-        modelReadyRef.current = true;
-      }
-
       prismEngineRef.current.reset();
       lastDetectedHandsRef.current = [];
       lastVideoTimeRef.current = -1;
@@ -356,17 +366,39 @@ export function CameraStage() {
       feedbackFrameRef.current = 0;
       setRenderQualityLevel('full');
       setIsStarted(true);
-      setStatus('TRACE ONLINE: extend fingers to pin the video sheet');
+      setStatus('CAMERA ONLINE: loading hand_landmarker module...');
 
       if (rafRef.current === null) {
         rafRef.current = requestAnimationFrame(renderFrame);
       }
     } catch (cameraError) {
       console.error(cameraError);
-      setError('Camera or hand model could not start. Check permission and network access for the MediaPipe model.');
+      setError('Camera could not start. Check browser permission and device availability.');
       setStatus('BOOT FAILED: camera module idle');
-      streamRef.current?.getTracks().forEach((track) => track.stop());
+      stream?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      if (!trackerRef.current) {
+        setStatus('LOADING HAND_LANDMARKER MODULE...');
+        const tracker = await createHandTracker();
+        if (streamRef.current !== stream) {
+          tracker.close();
+          return;
+        }
+        trackerRef.current = tracker;
+        modelReadyRef.current = true;
+      }
+      setError('');
+      setStatus('TRACE ONLINE: extend fingers to pin the video sheet');
+    } catch (modelError) {
+      console.error(modelError);
+      modelReadyRef.current = false;
+      setError('Hand model could not start. Camera remains online; check network access for the MediaPipe model.');
+      setStatus('CAMERA ONLINE: hand model offline');
     } finally {
       setIsLoading(false);
     }

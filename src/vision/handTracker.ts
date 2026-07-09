@@ -62,9 +62,9 @@ export async function createHandTracker() {
   let landmarker: HandLandmarker;
 
   try {
-    landmarker = await create('GPU');
-  } catch {
     landmarker = await create('CPU');
+  } catch {
+    landmarker = await create('GPU');
   }
 
   return {
